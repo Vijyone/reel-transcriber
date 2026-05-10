@@ -1,0 +1,18 @@
+yt-dlp>=2025.1.15
+notion-client>=2.2.1
+python-dotenv>=1.0.1
+instaloader>=4.13.0   # used as a fallback to get Instagram view counts (yt-dlp doesn't expose them)
+
+# Streamlit UI (`streamlit run app.py`)
+streamlit>=1.40
+
+# Cloud transcription (Groq backend)
+groq>=0.13.0
+
+# Local transcription on Apple Silicon (default backend in the UI)
+# Skipped automatically on Linux/Windows — only installs on Apple Silicon Macs.
+mlx-whisper>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"
+
+# Local transcription, cross-platform (used by `python reel_agent.py --local`)
+# Uncomment to install, OR run:  pip install faster-whisper
+# faster-whisper>=1.0.3

@@ -27,6 +27,7 @@ from reel_agent import (
     MLX_MODEL_REPOS,
     ReelData,
     fetch_pending_rows,
+    get_available_notion_columns,
     get_url_from_page,
     load_local_model,
     parse_notion_db_id,
@@ -613,11 +614,13 @@ with tab_notion:
                         if not resp.get("has_more"):
                             break
                         cursor = resp.get("next_cursor")
+                    available_cols = get_available_notion_columns(notion, db_id)
                     st.session_state["notion_db_id"] = db_id
                     st.session_state["notion_db_name"] = db_name
                     st.session_state["notion_db_input"] = db_input
                     st.session_state["notion_db_total"] = total
                     st.session_state["notion_db_with_transcript"] = with_transcript
+                    st.session_state["notion_available_cols"] = available_cols
                     st.session_state.pop("notion_rows", None)
                 except Exception as e:
                     st.error(f"Couldn't connect — {e}")
@@ -691,6 +694,7 @@ with tab_notion:
                     label = f"Run on {count} row" + ("" if count == 1 else "s")
                     if st.button(label, type="primary", key="notion_run"):
                         notion = get_notion_client(notion_token)
+                        available_cols = st.session_state.get("notion_available_cols")
                         ok = failed = 0
                         status_label = "Working on 1 row…" if count == 1 else f"Working through {count} rows…"
                         with st.status(status_label, expanded=True) as status:
@@ -703,14 +707,34 @@ with tab_notion:
                                     st.write(f"**Row {i}** · skipping (no link)")
                                     continue
                                 st.write(f"---\n**Row {i} of {count}** · `{url}`")
+                                data = None
                                 try:
                                     data = process_url(url, log)
-                                    update_notion_row(notion, page["id"], data, status="Done")
+                                except Exception as e:
+                                    failed += 1
+                                    st.write(f"   ⚠️ scrape/transcribe failed: {e}")
+                                    continue
+                                # Transcription succeeded — try to save, but don't lose
+                                # the data if Notion write fails.
+                                try:
+                                    update_notion_row(
+                                        notion, page["id"], data,
+                                        status="Done", available_props=available_cols,
+                                    )
                                     ok += 1
                                     st.write("   Saved to Notion ✓")
                                 except Exception as e:
                                     failed += 1
-                                    st.write(f"   ⚠️ {e}")
+                                    st.write(f"   ⚠️ Notion write failed: {e}")
+                                    with st.expander(f"📝 Transcript (Notion write failed — copy from here)", expanded=False):
+                                        st.markdown(f"**@{data.username or '?'}** · "
+                                                    f"{_fmt(data.likes)} likes · "
+                                                    f"{_fmt(data.views)} views · "
+                                                    f"{_fmt(data.comments)} comments")
+                                        if data.caption:
+                                            st.markdown(f"_{data.caption}_")
+                                        st.markdown("**Transcript**")
+                                        st.write(data.transcript or "_(empty)_")
                             if failed == 0:
                                 final = f"All {ok} saved." if ok != 1 else "Done — saved to Notion."
                             else:

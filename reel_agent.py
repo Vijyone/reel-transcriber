@@ -159,23 +159,51 @@ def chunk_rich_text(text: str):
     ]
 
 
-def update_notion_row(notion: NotionClient, page_id: str, data: ReelData, status: str = "Done"):
+def get_available_notion_columns(notion: NotionClient, db_id: str) -> set:
+    """Return the set of property (column) names that exist in this database's
+    data source. Used to skip writing to columns the user hasn't created."""
+    ds_id = resolve_data_source_id(notion, db_id)
+    ds = notion.data_sources.retrieve(data_source_id=ds_id)
+    return set(ds.get("properties", {}).keys())
+
+
+def update_notion_row(
+    notion: NotionClient,
+    page_id: str,
+    data: ReelData,
+    status: str = "Done",
+    available_props: Optional[set] = None,
+):
+    """Write the scraped/transcribed data back to a Notion row.
+
+    If `available_props` is provided, only writes to columns that actually
+    exist in the database — silently skipping the rest. This lets the app
+    work against Notion DBs with different schemas (some users have a
+    Comments column, others don't, etc.)."""
+
+    def _ok(name: Optional[str]) -> bool:
+        if not name:
+            return False
+        if available_props is None:
+            return True  # caller didn't filter — trust their config
+        return name in available_props
+
     props = {}
-    if PROP_LIKES and data.likes is not None:
+    if _ok(PROP_LIKES) and data.likes is not None:
         props[PROP_LIKES] = {"number": data.likes}
-    if PROP_VIEWS and data.views is not None:
+    if _ok(PROP_VIEWS) and data.views is not None:
         props[PROP_VIEWS] = {"number": data.views}
-    if PROP_COMMENTS and data.comments is not None:
+    if _ok(PROP_COMMENTS) and data.comments is not None:
         props[PROP_COMMENTS] = {"number": data.comments}
-    if PROP_CAPTION and data.caption is not None:
+    if _ok(PROP_CAPTION) and data.caption is not None:
         props[PROP_CAPTION] = {"rich_text": chunk_rich_text(data.caption)}
-    if PROP_TRANSCRIPT and data.transcript is not None:
+    if _ok(PROP_TRANSCRIPT) and data.transcript is not None:
         props[PROP_TRANSCRIPT] = {"rich_text": chunk_rich_text(data.transcript)}
-    if PROP_USERNAME and data.username:
+    if _ok(PROP_USERNAME) and data.username:
         props[PROP_USERNAME] = {"rich_text": [{"text": {"content": data.username}}]}
-    if PROP_STATUS:
+    if _ok(PROP_STATUS):
         props[PROP_STATUS] = {"select": {"name": status}}
-    if PROP_LAST_RUN:
+    if _ok(PROP_LAST_RUN):
         props[PROP_LAST_RUN] = {"date": {"start": time.strftime("%Y-%m-%dT%H:%M:%S")}}
 
     notion.pages.update(page_id=page_id, properties=props)

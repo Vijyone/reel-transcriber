@@ -193,34 +193,57 @@ def scrape_and_download(
 ) -> ReelData:
     """Fetch reel metadata and download the video to out_dir."""
     out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
+    is_youtube = "youtube.com" in reel_url.lower() or "youtu.be" in reel_url.lower()
 
-    # Audio-only: ~10x smaller than full video, fits under Groq's 24MB limit, transcription
-    # quality is identical (Whisper only uses the audio track anyway).
-    ydl_opts = {
-        "outtmpl": out_template,
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "retries": 3,
-    }
-    if cookies_file:
-        ydl_opts["cookiefile"] = cookies_file
-    if cookies_from_browser:
-        # yt-dlp wants a tuple: (browser_name,) or (browser_name, profile, keyring, container)
-        ydl_opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    def _build_opts(use_cookies: bool) -> dict:
+        # Audio-only: ~10x smaller than full video, fits under Groq's 24MB limit, transcription
+        # quality is identical (Whisper only uses the audio track anyway).
+        opts = {
+            "outtmpl": out_template,
+            "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "retries": 3,
+        }
+        if use_cookies:
+            if cookies_file:
+                opts["cookiefile"] = cookies_file
+            if cookies_from_browser:
+                # yt-dlp wants a tuple: (browser_name,) or (browser_name, profile, keyring, container)
+                opts["cookiesfrombrowser"] = (cookies_from_browser,)
+        return opts
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(reel_url, download=True)
-        # Resolve the actual downloaded path (extension may differ from template guess).
-        video_path = ydl.prepare_filename(info)
-        if not os.path.exists(video_path):
-            # Sometimes yt-dlp post-processes the filename; do a best-effort match.
-            base = os.path.splitext(video_path)[0]
-            for ext in (".mp4", ".mkv", ".webm", ".m4a"):
-                if os.path.exists(base + ext):
-                    video_path = base + ext
-                    break
+    def _run(use_cookies: bool):
+        with yt_dlp.YoutubeDL(_build_opts(use_cookies)) as ydl:
+            info = ydl.extract_info(reel_url, download=True)
+            video_path = ydl.prepare_filename(info)
+            if not os.path.exists(video_path):
+                base = os.path.splitext(video_path)[0]
+                for ext in (".mp4", ".mkv", ".webm", ".m4a"):
+                    if os.path.exists(base + ext):
+                        video_path = base + ext
+                        break
+            return info, video_path
+
+    using_cookies = bool(cookies_file or cookies_from_browser)
+    try:
+        info, video_path = _run(use_cookies=using_cookies)
+    except yt_dlp.utils.DownloadError as e:
+        # YouTube's anti-bot can filter ALL formats when the request is authenticated
+        # (an "audio_ext=m4a / vcodec=none" listing comes back empty). Cookies still help
+        # IG/TikTok, so we only retry anonymously for YouTube.
+        msg = str(e).lower()
+        anti_bot_signal = (
+            "format is not available" in msg
+            or "sign in to confirm" in msg
+            or "po token" in msg
+            or "forbidden" in msg
+        )
+        if is_youtube and using_cookies and anti_bot_signal:
+            info, video_path = _run(use_cookies=False)
+        else:
+            raise
 
     views = info.get("view_count") or info.get("play_count")
     # yt-dlp's IG extractor doesn't return view_count for reels — fall back to instaloader.

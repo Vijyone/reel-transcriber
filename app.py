@@ -51,38 +51,43 @@ html, body, [class*="css"], .stMarkdown, .stTextInput, .stTextArea, .stButton,
     color: #37352f;
 }
 
-/* Document-like centered content area */
+/* Use the full width — no more 900px corridor with empty margins */
 .block-container {
-    padding-top: 3.5rem !important;
-    padding-bottom: 4rem !important;
-    max-width: 900px !important;
+    padding-top: 1.25rem !important;
+    padding-bottom: 2rem !important;
+    padding-left: 2.5rem !important;
+    padding-right: 2.5rem !important;
+    max-width: 100% !important;
 }
 
-/* Headings: tighter letter-spacing, Notion weights */
+/* Hide Streamlit's "Made with Streamlit" footer and the menu for a cleaner header */
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent !important; height: 0 !important; }
+
+/* Compact headings */
 h1 {
-    font-size: 40px !important;
-    font-weight: 700 !important;
-    color: #37352f !important;
-    letter-spacing: -0.018em !important;
-    line-height: 1.2 !important;
-    margin-bottom: 0.25rem !important;
+    font-size: 28px !important; font-weight: 700 !important; color: #37352f !important;
+    letter-spacing: -0.015em !important; line-height: 1.2 !important;
+    margin: 0 !important; padding: 0 !important;
 }
-h2 { font-size: 28px !important; font-weight: 600 !important; color: #37352f !important; letter-spacing: -0.01em !important; }
-h3 { font-size: 20px !important; font-weight: 600 !important; color: #37352f !important; }
+h2 { font-size: 22px !important; font-weight: 600 !important; color: #37352f !important; letter-spacing: -0.01em !important; }
+h3 { font-size: 17px !important; font-weight: 600 !important; color: #37352f !important; }
 h4, h5 {
-    font-size: 14px !important; font-weight: 600 !important; color: #37352f !important;
-    text-transform: none !important; margin-top: 1.25rem !important; margin-bottom: 0.5rem !important;
+    font-size: 13px !important; font-weight: 600 !important; color: #787774 !important;
+    text-transform: uppercase !important; letter-spacing: 0.04em !important;
+    margin-top: 0.75rem !important; margin-bottom: 0.5rem !important;
 }
 
-/* Captions in Notion's secondary text gray */
-.stCaption, [data-testid="stCaptionContainer"], small { color: #787774 !important; font-size: 13px !important; }
+/* Captions tighter */
+.stCaption, [data-testid="stCaptionContainer"], small { color: #787774 !important; font-size: 12px !important; }
 
-/* Sidebar — soft off-white background, subtle right border */
+/* Sidebar */
 [data-testid="stSidebar"] { background: #fbfbfa !important; border-right: 1px solid #ececea !important; }
-[data-testid="stSidebar"] .block-container { padding-top: 2rem !important; }
-[data-testid="stSidebar"] hr { margin: 1.25rem 0 !important; border-color: #ececea !important; }
+[data-testid="stSidebar"] .block-container { padding-top: 1.25rem !important; padding-bottom: 1.25rem !important; }
+[data-testid="stSidebar"] hr { margin: 1rem 0 !important; border-color: #ececea !important; }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { margin-bottom: 0.4rem !important; }
 
-/* Buttons: subtle by default, dark filled for primary (Notion action style) */
+/* Buttons: subtle by default, dark for primary */
 .stButton > button {
     background: #ffffff !important; color: #37352f !important;
     border: 1px solid #e9e8e3 !important; box-shadow: none !important;
@@ -94,7 +99,7 @@ h4, h5 {
 .stButton > button[kind="primary"] { background: #37352f !important; color: #ffffff !important; border: 1px solid #37352f !important; }
 .stButton > button[kind="primary"]:hover { background: #2c2a26 !important; border-color: #2c2a26 !important; color: #ffffff !important; }
 
-/* Inputs: thin border, no fill */
+/* Inputs */
 .stTextInput input, .stTextArea textarea, .stSelectbox > div > div {
     border: 1px solid #e9e8e3 !important; background: #ffffff !important;
     border-radius: 6px !important; box-shadow: none !important; color: #37352f !important;
@@ -103,40 +108,48 @@ h4, h5 {
     border-color: #2383e2 !important; box-shadow: 0 0 0 1px #2383e2 !important; outline: none !important;
 }
 
-/* Tabs: underline-only style (no boxy backgrounds) */
-.stTabs [data-baseweb="tab-list"] { gap: 28px !important; border-bottom: 1px solid #ececea !important; margin-bottom: 1.5rem !important; }
+/* Tabs: underline-only */
+.stTabs [data-baseweb="tab-list"] { gap: 24px !important; border-bottom: 1px solid #ececea !important; margin-top: 0.5rem !important; margin-bottom: 1rem !important; }
 .stTabs [data-baseweb="tab"] { padding: 8px 0 !important; font-weight: 500 !important; color: #787774 !important; background: transparent !important; }
 .stTabs [data-baseweb="tab"][aria-selected="true"] { color: #37352f !important; }
 .stTabs [data-baseweb="tab-highlight"] { background: #37352f !important; height: 2px !important; }
 
 /* Subtle dividers */
-hr { border-color: #ececea !important; margin: 1.5rem 0 !important; }
+hr { border-color: #ececea !important; margin: 1rem 0 !important; }
 
-/* Expanders */
-.streamlit-expanderHeader, [data-testid="stExpander"] details summary {
+/* Expander cards: tighter */
+[data-testid="stExpander"] details summary {
     background: transparent !important; border: 1px solid #ececea !important;
     border-radius: 6px !important; color: #37352f !important; font-weight: 500 !important;
+    padding: 8px 12px !important;
 }
-[data-testid="stExpander"] details { border: 1px solid #ececea !important; border-radius: 6px !important; background: #ffffff !important; }
+[data-testid="stExpander"] details { border: 1px solid #ececea !important; border-radius: 6px !important; background: #ffffff !important; margin-bottom: 8px !important; }
+[data-testid="stExpander"] details[open] summary { border-bottom: 1px solid #ececea !important; border-radius: 6px 6px 0 0 !important; }
 
-/* Metric cards: soft gray fill */
-[data-testid="stMetric"] { background: #fbfbfa !important; padding: 14px 18px !important; border-radius: 6px !important; border: 1px solid #ececea !important; }
-[data-testid="stMetricLabel"] { color: #787774 !important; font-size: 12px !important; font-weight: 500 !important; }
-[data-testid="stMetricValue"] { color: #37352f !important; font-weight: 600 !important; }
+/* Metric cards: tighter */
+[data-testid="stMetric"] { background: #fbfbfa !important; padding: 10px 14px !important; border-radius: 6px !important; border: 1px solid #ececea !important; }
+[data-testid="stMetricLabel"] { color: #787774 !important; font-size: 11px !important; font-weight: 500 !important; text-transform: uppercase !important; letter-spacing: 0.04em !important; }
+[data-testid="stMetricValue"] { color: #37352f !important; font-weight: 600 !important; font-size: 18px !important; }
 
 /* Status / progress widgets */
 [data-testid="stStatus"], [data-testid="stStatusWidget"] {
     background: #fbfbfa !important; border: 1px solid #ececea !important; border-radius: 6px !important;
 }
 
-/* Alerts softer */
-[data-testid="stAlert"] { border-radius: 6px !important; border: 1px solid transparent !important; padding: 12px 16px !important; }
+[data-testid="stAlert"] { border-radius: 6px !important; border: 1px solid transparent !important; padding: 10px 14px !important; }
 
-/* Dataframes: cleaner borders */
 [data-testid="stDataFrame"] { border: 1px solid #ececea !important; border-radius: 6px !important; overflow: hidden !important; }
 
-/* Inline code */
 code { background: #f4f3ef !important; color: #eb5757 !important; padding: 1px 5px !important; border-radius: 3px !important; font-size: 0.88em !important; }
+
+/* Compact vertical gaps between widgets */
+.element-container { margin-bottom: 0.5rem !important; }
+.stMarkdown p { margin-bottom: 0.4rem !important; }
+
+/* Hero strip — title + status on one row */
+.hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 0; }
+.hero-status { color: #787774; font-size: 12px; }
+.hero-status code { background: #f4f3ef; color: #37352f !important; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
 </style>
     """,
     unsafe_allow_html=True,
@@ -158,51 +171,37 @@ def get_notion_client(token: str):
 # ──────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### Setup")
-    st.caption("Tweak how the app transcribes and where it gets data.")
-
-    st.markdown("**Model quality**")
     model_size = st.selectbox(
-        "Model quality",
+        "Whisper model",
         list(MLX_MODEL_REPOS.keys()),
         index=4,  # large-v3-turbo
-        label_visibility="collapsed",
-        help="turbo = best speed/quality balance (recommended). large-v3 = highest accuracy. tiny/base = fastest.",
-    )
-    st.caption(
-        "First time you pick a model, it downloads from HuggingFace (~1.5 GB for turbo). "
-        "After that everything stays on your Mac — no internet, no API keys, no rate limits."
+        help="turbo = best speed/quality balance. large-v3 = highest accuracy. tiny/base = fastest.",
     )
 
-    st.markdown("---")
     use_existing_captions = st.checkbox(
-        "Use existing captions when available",
+        "Skip Whisper if captions exist",
         value=True,
         help=(
-            "If the video already has captions (e.g. YouTube auto-captions or "
-            "uploaded subtitles), use those instead of running Whisper. Much "
-            "faster — turns a 5-min transcription on a long video into ~2 sec. "
-            "Quality is slightly lower than Whisper on technical content."
+            "Use existing captions (e.g. YouTube auto-captions) when available — "
+            "turns a 5-min transcription on a long video into ~2 sec. Quality slightly "
+            "lower than Whisper on technical content."
         ),
     )
 
-    st.markdown("---")
-    st.markdown("**Browser login (for gated content)**")
     browser = st.selectbox(
-        "Pull cookies from",
+        "Browser cookies",
         ["none", "chrome", "safari", "firefox", "edge", "brave"],
         index=1,
         help=(
             "If you're logged into Instagram, TikTok, YouTube, etc. in this browser, "
-            "the app borrows those cookies. Skips rate limits and unlocks private/gated videos."
+            "the app borrows those cookies to skip rate limits and unlock gated videos."
         ),
     )
     cookies_from_browser = None if browser == "none" else browser
 
     st.markdown("---")
-    st.markdown("**Notion**")
     notion_token = st.text_input(
-        "Integration token",
+        "Notion integration token",
         type="password",
         value=os.getenv("NOTION_TOKEN", ""),
         help="From notion.so/profile/integrations. The same token works for any database you've shared with the integration.",
@@ -299,17 +298,18 @@ def render_result_card(url: str, data: Optional[ReelData], error: Optional[str])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Header
+# Header — compact hero with title + live status on one row
 # ──────────────────────────────────────────────────────────────────────────────
 
-st.title("Reel Transcriber")
-st.write(
-    "Pull metrics and transcribe short videos from Instagram, YouTube, TikTok, Twitter, "
-    "and most other video sites. Everything runs on your Mac — no API keys, no internet needed after first model download."
+st.markdown(
+    f"""<div class='hero-row'>
+        <h1>Reel Transcriber</h1>
+        <div class='hero-status'>
+            on your Mac · <code>{model_size}</code> · cookies from <code>{browser}</code>
+        </div>
+    </div>""",
+    unsafe_allow_html=True,
 )
-st.caption(f"Transcribing on your Mac · `{model_size}` · IG cookies from **{browser}**.")
-
-st.write("")
 
 tab_paste, tab_notion = st.tabs(["  Try a few links  ", "  Sync with Notion  "])
 
@@ -319,52 +319,59 @@ tab_paste, tab_notion = st.tabs(["  Try a few links  ", "  Sync with Notion  "])
 # ──────────────────────────────────────────────────────────────────────────────
 
 with tab_paste:
-    st.markdown("##### Drop in some video links")
-    st.caption(
-        "One per line. Works with Instagram reels, YouTube videos, TikToks, X posts, "
-        "and most other public video sites. Hit transcribe and you'll get the metrics + full transcript for each."
-    )
+    # Two-pane layout: input + button on the left, live progress + results on the right.
+    pane_in, pane_out = st.columns([1, 2], gap="large")
 
-    urls_text = st.text_area(
-        "Video URLs",
-        height=140,
-        placeholder=(
-            "https://www.instagram.com/reel/…\n"
-            "https://www.youtube.com/watch?v=…\n"
-            "https://www.tiktok.com/@user/video/…\n"
-            "https://x.com/user/status/…"
-        ),
-        label_visibility="collapsed",
-    )
+    with pane_in:
+        st.markdown("##### Paste video links")
+        urls_text = st.text_area(
+            "Video URLs",
+            height=240,
+            placeholder=(
+                "https://www.instagram.com/reel/…\n"
+                "https://www.youtube.com/watch?v=…\n"
+                "https://www.tiktok.com/@user/video/…\n"
+                "https://x.com/user/status/…"
+            ),
+            label_visibility="collapsed",
+        )
+        run_clicked = st.button("Transcribe", type="primary", key="paste_run", use_container_width=True)
+        st.caption("Instagram · YouTube · TikTok · X · Vimeo · Reddit · 1000+ sites")
 
-    if st.button("Transcribe", type="primary", key="paste_run"):
-        urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
-        if not urls:
-            st.warning("Paste at least one link first.")
-        else:
-            results = []
-            label = "Working on 1 link…" if len(urls) == 1 else f"Working through {len(urls)} links…"
-            with st.status(label, expanded=True) as status:
-                log = lambda msg: st.write(msg)
-                for i, url in enumerate(urls, 1):
-                    st.write(f"---\n**Link {i} of {len(urls)}** · `{url}`")
-                    try:
-                        data = process_url(url, log)
-                        results.append((url, data, None))
-                    except Exception as e:
-                        results.append((url, None, str(e)))
-                        st.write(f"   ⚠️ {e}")
-                ok = sum(1 for _, d, _ in results if d is not None)
-                if ok == len(urls):
-                    final = f"All {ok} done." if ok > 1 else "Done."
-                else:
-                    final = f"{ok} of {len(urls)} done — {len(urls) - ok} hit a snag."
-                status.update(label=final, state="complete" if ok == len(urls) else "error")
-
-            st.write("")
+    with pane_out:
+        if not run_clicked:
             st.markdown("##### Results")
-            for url, data, err in results:
-                render_result_card(url, data, err)
+            st.caption("Hit **Transcribe** on the left and results will appear here.")
+        else:
+            urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
+            if not urls:
+                st.warning("Paste at least one link first.")
+            else:
+                results = []
+                label = "Working on 1 link…" if len(urls) == 1 else f"Working through {len(urls)} links…"
+                with st.status(label, expanded=True) as status:
+                    log = lambda msg: st.write(msg)
+                    for i, url in enumerate(urls, 1):
+                        st.write(f"---\n**Link {i} of {len(urls)}** · `{url}`")
+                        try:
+                            data = process_url(url, log)
+                            results.append((url, data, None))
+                        except Exception as e:
+                            results.append((url, None, str(e)))
+                            st.write(f"   ⚠️ {e}")
+                    ok = sum(1 for _, d, _ in results if d is not None)
+                    if ok == len(urls):
+                        final = f"All {ok} done." if ok > 1 else "Done."
+                    else:
+                        final = f"{ok} of {len(urls)} done — {len(urls) - ok} hit a snag."
+                    status.update(label=final, state="complete" if ok == len(urls) else "error")
+
+                # 2-up grid of result cards
+                st.markdown("##### Results")
+                grid = [st.columns(2, gap="medium") for _ in range((len(results) + 1) // 2)]
+                for idx, (url, data, err) in enumerate(results):
+                    with grid[idx // 2][idx % 2]:
+                        render_result_card(url, data, err)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -375,16 +382,14 @@ with tab_notion:
     if not notion_token:
         st.info("Add your Notion integration token in the sidebar to get going.")
     else:
-        st.markdown("##### Which Notion database?")
-        st.caption("Paste any link to your database, or just the ID. The app remembers what you've connected to in this session.")
-
+        # Compact connect bar — single row, no caption noise
         default_db_input = st.session_state.get("notion_db_input", os.getenv("NOTION_DATABASE_ID", ""))
-        db_col, btn_col = st.columns([4, 1])
+        db_col, btn_col = st.columns([5, 1])
         with db_col:
             db_input = st.text_input(
                 "Notion database URL or ID",
                 value=default_db_input,
-                placeholder="https://www.notion.so/your-workspace/Reels-a585678b…",
+                placeholder="Paste your Notion database URL or ID…",
                 help="Make sure you've shared the database with your integration via … → Connections.",
                 label_visibility="collapsed",
             )
@@ -434,29 +439,39 @@ with tab_notion:
             done = st.session_state["notion_db_with_transcript"]
             empty = total - done
 
-            st.write("")
-            name_c, total_c, done_c, empty_c = st.columns([2.5, 1, 1, 1])
-            name_c.markdown(f"**📁 {st.session_state['notion_db_name']}**\n\n_connected_")
-            total_c.metric("Rows", _fmt(total))
-            done_c.metric("Transcribed", _fmt(done))
-            empty_c.metric("Still to do", _fmt(empty))
+            # Single-line status banner — DB name on the left, inline counts on the right
+            st.markdown(
+                f"""<div style='display:flex;align-items:center;justify-content:space-between;
+                    padding:10px 14px;background:#fbfbfa;border:1px solid #ececea;
+                    border-radius:6px;margin:0.5rem 0;'>
+                    <div><strong>📁 {st.session_state['notion_db_name']}</strong>
+                         <span style='color:#787774;margin-left:0.5rem;'>connected</span></div>
+                    <div style='color:#787774;font-size:13px;'>
+                        <strong style='color:#37352f'>{_fmt(total)}</strong> rows ·
+                        <strong style='color:#37352f'>{_fmt(done)}</strong> transcribed ·
+                        <strong style='color:#37352f'>{_fmt(empty)}</strong> to do
+                    </div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
 
-            st.write("")
-            st.markdown("##### Pick which rows to run")
-
-            c1, c2, c3 = st.columns([1.8, 1, 2])
+            # Tight filters row — checkbox + cap + search + button on a single row
+            c1, c2, c3, c4 = st.columns([2.5, 1, 2.5, 1])
             with c1:
                 do_force = st.checkbox(
-                    "Re-run rows that already have a transcript",
+                    "Include already-done rows",
                     value=(empty == 0),
-                    help="Off = only empty rows. On = every row, even ones already done.",
+                    help="Off = only rows with empty Transcript. On = every row.",
                 )
             with c2:
-                limit = st.number_input("Cap at", min_value=0, value=0, help="0 = run them all")
+                limit = st.number_input("Cap", min_value=0, value=0, help="0 = run them all", label_visibility="visible")
             with c3:
                 title_filter = st.text_input("Search by name", placeholder="e.g. 'too expensive'")
+            with c4:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # align with input baseline
+                load_clicked = st.button("Show rows", key="notion_load", use_container_width=True)
 
-            if st.button("Show matching rows", key="notion_load"):
+            if load_clicked:
                 try:
                     notion = get_notion_client(notion_token)
                     rows = list(fetch_pending_rows(
@@ -471,12 +486,9 @@ with tab_notion:
                 rows = st.session_state["notion_rows"]
                 if not rows:
                     if not do_force and empty == 0:
-                        st.info(
-                            "Nothing to do — every row already has a transcript. "
-                            "Tick **Re-run rows that already have a transcript** above if you want to refresh them."
-                        )
+                        st.info("Every row already has a transcript. Tick **Include already-done rows** to refresh them.")
                     elif title_filter:
-                        st.info(f"No rows match `{title_filter}`. Try a different word.")
+                        st.info(f"No rows match `{title_filter}`.")
                     else:
                         st.info("No rows to show.")
                 else:
@@ -487,12 +499,19 @@ with tab_notion:
                             "Name": title_arr[0]["plain_text"] if title_arr else "(no title)",
                             "Reel": get_url_from_page(p) or "(missing)",
                         })
-                    st.caption(f"Found {len(rows)} row(s).")
-                    st.dataframe(preview, use_container_width=True, hide_index=True)
 
                     count = min(len(rows), limit) if limit else len(rows)
                     label = f"Run on {count} row" + ("" if count == 1 else "s")
-                    if st.button(label, type="primary", key="notion_run"):
+
+                    # Preview rows on the left, run button on the right — same baseline
+                    preview_col, run_col = st.columns([4, 1])
+                    with preview_col:
+                        st.caption(f"Found **{len(rows)}** row{'' if len(rows) == 1 else 's'} matching.")
+                    with run_col:
+                        run_clicked = st.button(label, type="primary", key="notion_run", use_container_width=True)
+                    st.dataframe(preview, use_container_width=True, hide_index=True, height=min(35 * (len(rows) + 1) + 3, 280))
+
+                    if run_clicked:
                         notion = get_notion_client(notion_token)
                         available_cols = st.session_state.get("notion_available_cols")
                         ok = failed = 0

@@ -417,7 +417,24 @@ def render_result_card(url: str, data: Optional[ReelData], error: Optional[str])
             err_lower = error.lower()
             # YouTube on cloud servers is famously flaky thanks to Google's anti-bot
             # measures. Give the user a concrete next step instead of a cryptic error.
-            if "youtube" in url.lower() and (
+            if "tiktok" in url.lower() and (
+                "unexpected response" in err_lower
+                or "connection reset" in err_lower
+                or "connection aborted" in err_lower
+                or "unable to download webpage" in err_lower
+            ):
+                st.info(
+                    "🎵 **TikTok tip:** TikTok aggressively rate-limits by IP — they "
+                    "drop the connection as soon as they suspect a bot. This is usually "
+                    "temporary.\n\n"
+                    "**Try:**\n"
+                    "1. Wait 30-60 min and retry the same URL\n"
+                    "2. Switch network (mobile hotspot, different WiFi)\n"
+                    "3. Update yt-dlp: `pip install --upgrade --pre yt-dlp` and restart\n"
+                    "4. As a last resort, download the TikTok manually and use the "
+                    "**file-upload** option (if/when added)"
+                )
+            elif "youtube" in url.lower() and (
                 "format is not available" in err_lower
                 or "video unavailable" in err_lower
                 or "sign in" in err_lower

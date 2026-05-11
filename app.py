@@ -204,7 +204,13 @@ with st.sidebar:
         "Notion integration token",
         type="password",
         value=os.getenv("NOTION_TOKEN", ""),
-        help="From notion.so/profile/integrations. The same token works for any database you've shared with the integration.",
+        help=(
+            "From notion.so/profile/integrations. The same token works for any "
+            "database the integration has been added to.\n\n"
+            "**Working with guests?** Notion integrations are workspace-level — "
+            "guests can't see them. Just share your token with them; they paste "
+            "it here. Or create a free shared workspace where everyone is a member."
+        ),
         placeholder="ntn_…",
     )
 

@@ -1,18 +1,10 @@
-yt-dlp>=2026.3.17  # Latest stable. YouTube's anti-bot changes break older versions every few weeks.
+yt-dlp>=2026.3.17     # Latest stable. YouTube's anti-bot changes break older versions every few weeks.
 notion-client>=2.2.1
 python-dotenv>=1.0.1
-instaloader>=4.13.0   # used as a fallback to get Instagram view counts (yt-dlp doesn't expose them)
+instaloader>=4.13.0   # Fallback to get Instagram view counts (yt-dlp doesn't expose them).
 
-# Streamlit UI (`streamlit run app.py`)
+# Streamlit UI (`./run.sh`)
 streamlit>=1.40
 
-# Cloud transcription (Groq backend)
-groq>=0.13.0
-
-# Local transcription on Apple Silicon (default backend in the UI)
-# Skipped automatically on Linux/Windows — only installs on Apple Silicon Macs.
-mlx-whisper>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"
-
-# Local transcription, cross-platform (used as the no-key fallback when deployed
-# to Streamlit Cloud). Skipped on Mac since mlx-whisper is faster on Apple Silicon.
-faster-whisper>=1.0.3; sys_platform != "darwin"
+# Local transcription on Apple Silicon
+mlx-whisper>=0.4.0

@@ -50,6 +50,204 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Notion-inspired styling — softer surfaces, document-like layout, quieter buttons.
+st.markdown(
+    """
+<style>
+/* Inter / system font everywhere */
+html, body, [class*="css"], .stMarkdown, .stTextInput, .stTextArea, .stButton,
+.stSelectbox, .stRadio, .stCheckbox {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    color: #37352f;
+}
+
+/* Document-like centered content area */
+.block-container {
+    padding-top: 3.5rem !important;
+    padding-bottom: 4rem !important;
+    max-width: 900px !important;
+}
+
+/* Headings: tighter letter-spacing, Notion weights */
+h1 {
+    font-size: 40px !important;
+    font-weight: 700 !important;
+    color: #37352f !important;
+    letter-spacing: -0.018em !important;
+    line-height: 1.2 !important;
+    margin-bottom: 0.25rem !important;
+}
+h2 {
+    font-size: 28px !important;
+    font-weight: 600 !important;
+    color: #37352f !important;
+    letter-spacing: -0.01em !important;
+}
+h3 {
+    font-size: 20px !important;
+    font-weight: 600 !important;
+    color: #37352f !important;
+}
+h4, h5 {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #37352f !important;
+    text-transform: none !important;
+    margin-top: 1.25rem !important;
+    margin-bottom: 0.5rem !important;
+}
+
+/* Captions in Notion's secondary text gray */
+.stCaption, [data-testid="stCaptionContainer"], small {
+    color: #787774 !important;
+    font-size: 13px !important;
+}
+
+/* Sidebar — soft off-white background, subtle right border */
+[data-testid="stSidebar"] {
+    background: #fbfbfa !important;
+    border-right: 1px solid #ececea !important;
+}
+[data-testid="stSidebar"] .block-container {
+    padding-top: 2rem !important;
+}
+[data-testid="stSidebar"] hr {
+    margin: 1.25rem 0 !important;
+    border-color: #ececea !important;
+}
+
+/* Buttons: subtle by default, dark filled for primary (Notion action style) */
+.stButton > button {
+    background: #ffffff !important;
+    color: #37352f !important;
+    border: 1px solid #e9e8e3 !important;
+    box-shadow: none !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
+    padding: 6px 14px !important;
+    transition: background 0.08s ease, border-color 0.08s ease !important;
+}
+.stButton > button:hover {
+    background: #f4f3ef !important;
+    border-color: #d9d8d3 !important;
+    color: #37352f !important;
+}
+.stButton > button[kind="primary"] {
+    background: #37352f !important;
+    color: #ffffff !important;
+    border: 1px solid #37352f !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: #2c2a26 !important;
+    border-color: #2c2a26 !important;
+    color: #ffffff !important;
+}
+
+/* Inputs: thin border, no fill */
+.stTextInput input, .stTextArea textarea, .stSelectbox > div > div {
+    border: 1px solid #e9e8e3 !important;
+    background: #ffffff !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+    color: #37352f !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: #2383e2 !important;
+    box-shadow: 0 0 0 1px #2383e2 !important;
+    outline: none !important;
+}
+
+/* Tabs: underline-only style (no boxy backgrounds) */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 28px !important;
+    border-bottom: 1px solid #ececea !important;
+    margin-bottom: 1.5rem !important;
+}
+.stTabs [data-baseweb="tab"] {
+    padding: 8px 0 !important;
+    font-weight: 500 !important;
+    color: #787774 !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    color: #37352f !important;
+}
+.stTabs [data-baseweb="tab-highlight"] {
+    background: #37352f !important;
+    height: 2px !important;
+}
+
+/* Subtle dividers */
+hr {
+    border-color: #ececea !important;
+    margin: 1.5rem 0 !important;
+}
+
+/* Expanders: thin bordered cards */
+.streamlit-expanderHeader, [data-testid="stExpander"] details summary {
+    background: transparent !important;
+    border: 1px solid #ececea !important;
+    border-radius: 6px !important;
+    color: #37352f !important;
+    font-weight: 500 !important;
+}
+[data-testid="stExpander"] details {
+    border: 1px solid #ececea !important;
+    border-radius: 6px !important;
+    background: #ffffff !important;
+}
+
+/* Metric cards: soft gray fill, no border */
+[data-testid="stMetric"] {
+    background: #fbfbfa !important;
+    padding: 14px 18px !important;
+    border-radius: 6px !important;
+    border: 1px solid #ececea !important;
+}
+[data-testid="stMetricLabel"] {
+    color: #787774 !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+}
+[data-testid="stMetricValue"] {
+    color: #37352f !important;
+    font-weight: 600 !important;
+}
+
+/* Status / progress widgets */
+[data-testid="stStatus"], [data-testid="stStatusWidget"] {
+    background: #fbfbfa !important;
+    border: 1px solid #ececea !important;
+    border-radius: 6px !important;
+}
+
+/* Info / warning / success banners — softer */
+[data-testid="stAlert"] {
+    border-radius: 6px !important;
+    border: 1px solid transparent !important;
+    padding: 12px 16px !important;
+}
+
+/* Dataframes: cleaner borders */
+[data-testid="stDataFrame"] {
+    border: 1px solid #ececea !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+}
+
+/* Code blocks and inline code */
+code {
+    background: #f4f3ef !important;
+    color: #eb5757 !important;
+    padding: 1px 5px !important;
+    border-radius: 3px !important;
+    font-size: 0.88em !important;
+}
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Cached resources
 # ──────────────────────────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ from reel_agent import (
     parse_notion_db_id,
     resolve_data_source_id,
     scrape_and_download,
-    transcribe_with_mlx,
+    transcribe_with_mlx_stream,
     update_notion_row,
 )
 
@@ -206,22 +206,42 @@ def _fmt(n: Optional[int]) -> str:
     return f"{n:,}" if isinstance(n, int) else "—"
 
 
-def get_transcribe_fn():
-    return lambda path: transcribe_with_mlx(path, model_size=model_size)
-
-
 def process_url(url: str, log) -> ReelData:
-    """Scrape + transcribe a single URL. log is a callable for progress messages."""
-    transcribe_fn = get_transcribe_fn()
+    """Scrape + transcribe a single URL, with live progress in the UI.
+
+    `log` writes to the surrounding status block. Below it, this function also
+    draws an in-place progress bar and a streaming text box that fills with
+    transcript segments as mlx-whisper produces them."""
     with tempfile.TemporaryDirectory() as tmp:
         log("Grabbing audio…")
         t0 = time.time()
         data = scrape_and_download(url, tmp, None, cookies_from_browser)
-        log(f"   {_fmt(data.likes)} likes · {_fmt(data.views)} views · {_fmt(data.comments)} comments · @{data.username or '?'}  _({time.time()-t0:.1f}s)_")
-        log("Transcribing…")
+        log(
+            f"   {_fmt(data.likes)} likes · {_fmt(data.views)} views · "
+            f"{_fmt(data.comments)} comments · @{data.username or '?'}  _({time.time()-t0:.1f}s)_"
+        )
+        duration = data.duration or 0.0
+        if duration:
+            log(f"Transcribing… (audio is {duration:.0f}s long)")
+        else:
+            log("Transcribing…")
+
+        # Live UI: progress bar + scrolling transcript that builds up segment by segment
+        bar = st.progress(0.0, text="0% · waiting for first segment…")
+        live_box = st.empty()
+        parts = []
         t1 = time.time()
-        data.transcript = transcribe_fn(data.video_path)
-        log(f"   {len(data.transcript or ''):,} characters  _({time.time()-t1:.1f}s)_")
+        for seg_text, end_sec in transcribe_with_mlx_stream(
+            data.video_path, model_size=model_size
+        ):
+            parts.append(seg_text)
+            if duration > 0:
+                p = min(1.0, end_sec / duration)
+                bar.progress(p, text=f"{int(p * 100)}% · {end_sec:.0f}s of {duration:.0f}s")
+            live_box.markdown("> " + " ".join(parts))
+        bar.progress(1.0, text="100% · done")
+        data.transcript = " ".join(parts).strip()
+        log(f"   {len(data.transcript):,} characters  _({time.time()-t1:.1f}s)_")
     return data
 
 

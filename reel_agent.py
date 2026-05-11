@@ -26,13 +26,16 @@ Run on demand:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import tempfile
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterator, Optional, Tuple
 
 from dotenv import load_dotenv
 from notion_client import Client as NotionClient
@@ -73,6 +76,7 @@ class ReelData:
     comments: Optional[int] = None
     caption: Optional[str] = None
     username: Optional[str] = None
+    duration: Optional[float] = None  # seconds; used to scale transcription progress
     video_path: Optional[str] = None
     transcript: Optional[str] = None
 
@@ -281,6 +285,7 @@ def scrape_and_download(
         comments=info.get("comment_count"),
         caption=info.get("description") or info.get("title") or "",
         username=info.get("uploader_id") or info.get("uploader") or info.get("channel"),
+        duration=info.get("duration"),
         video_path=video_path,
     )
 
@@ -332,7 +337,8 @@ MLX_MODEL_REPOS = {
 
 
 def transcribe_with_mlx(video_path: str, model_size: str = "large-v3-turbo") -> str:
-    """Local transcription via mlx-whisper (Apple Silicon native, very fast)."""
+    """Local transcription via mlx-whisper (Apple Silicon native, very fast).
+    Blocking — returns the full text. For live progress, use transcribe_with_mlx_stream."""
     if not video_path or not os.path.exists(video_path):
         return ""
     try:
@@ -345,6 +351,89 @@ def transcribe_with_mlx(video_path: str, model_size: str = "large-v3-turbo") -> 
     repo = MLX_MODEL_REPOS.get(model_size, model_size)
     result = mlx_whisper.transcribe(video_path, path_or_hf_repo=repo)
     return (result.get("text") or "").strip()
+
+
+# mlx-whisper's verbose output emits one line per segment like:
+#   [00:00.000 --> 00:05.200]  Hello world
+# We parse these on-the-fly so callers can show live progress.
+_SEGMENT_LINE_RE = re.compile(
+    r"\[(\d+):(\d+(?:\.\d+)?)\s*-->\s*(\d+):(\d+(?:\.\d+)?)\]\s*(.+)"
+)
+
+
+class _SegmentParser:
+    """File-like stdout sink that fires a callback for each segment line."""
+
+    def __init__(self, on_segment):
+        self.on_segment = on_segment
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            m = _SEGMENT_LINE_RE.search(line)
+            if not m:
+                continue
+            end_sec = int(m.group(3)) * 60 + float(m.group(4))
+            text = m.group(5).strip()
+            if text:
+                self.on_segment(text, end_sec)
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+def transcribe_with_mlx_stream(
+    video_path: str,
+    model_size: str = "large-v3-turbo",
+) -> Iterator[Tuple[str, float]]:
+    """Generator yielding `(segment_text, end_timestamp_seconds)` tuples as
+    mlx-whisper transcribes the audio. The full transcript is the
+    concatenation of all yielded segment_text values.
+
+    Runs mlx-whisper in a background thread and captures its verbose stdout.
+    The caller (main thread) is free to update Streamlit widgets between yields."""
+    if not video_path or not os.path.exists(video_path):
+        return
+    try:
+        import mlx_whisper
+    except ImportError:
+        sys.exit(
+            "mlx-whisper is not installed. Install it with:\n"
+            "    pip install mlx-whisper"
+        )
+    repo = MLX_MODEL_REPOS.get(model_size, model_size)
+
+    q: "queue.Queue" = queue.Queue()
+    DONE = object()
+    err_holder = {"error": None}
+
+    def _worker():
+        try:
+            parser = _SegmentParser(lambda text, ts: q.put((text, ts)))
+            # redirect_stdout is process-global, but during transcription nothing
+            # else meaningful is printing on this Python process.
+            with contextlib.redirect_stdout(parser):
+                mlx_whisper.transcribe(video_path, path_or_hf_repo=repo, verbose=True)
+        except Exception as e:
+            err_holder["error"] = e
+        finally:
+            q.put(DONE)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+    while True:
+        item = q.get()
+        if item is DONE:
+            break
+        yield item  # (text, end_sec)
+
+    t.join()
+    if err_holder["error"]:
+        raise err_holder["error"]
 
 
 # --------------------------------------------------------------------------- #

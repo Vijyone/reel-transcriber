@@ -175,6 +175,18 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    use_existing_captions = st.checkbox(
+        "Use existing captions when available",
+        value=True,
+        help=(
+            "If the video already has captions (e.g. YouTube auto-captions or "
+            "uploaded subtitles), use those instead of running Whisper. Much "
+            "faster — turns a 5-min transcription on a long video into ~2 sec. "
+            "Quality is slightly lower than Whisper on technical content."
+        ),
+    )
+
+    st.markdown("---")
     st.markdown("**Browser login (for gated content)**")
     browser = st.selectbox(
         "Pull cookies from",
@@ -209,24 +221,38 @@ def _fmt(n: Optional[int]) -> str:
 def process_url(url: str, log) -> ReelData:
     """Scrape + transcribe a single URL, with live progress in the UI.
 
-    `log` writes to the surrounding status block. Below it, this function also
-    draws an in-place progress bar and a streaming text box that fills with
-    transcript segments as mlx-whisper produces them."""
+    Fast path: if the source platform already has captions (e.g. YouTube),
+    those are used directly and Whisper is skipped — instant transcript.
+    Slow path: stream Whisper segments with a live progress bar.
+
+    `log` writes to the surrounding status block."""
     with tempfile.TemporaryDirectory() as tmp:
-        log("Grabbing audio…")
+        log("Grabbing audio + checking for captions…")
         t0 = time.time()
-        data = scrape_and_download(url, tmp, None, cookies_from_browser)
+        data = scrape_and_download(
+            url, tmp, None, cookies_from_browser, try_subtitles=use_existing_captions
+        )
         log(
             f"   {_fmt(data.likes)} likes · {_fmt(data.views)} views · "
             f"{_fmt(data.comments)} comments · @{data.username or '?'}  _({time.time()-t0:.1f}s)_"
         )
+
+        # Fast path — the platform already has captions, no need to transcribe.
+        if use_existing_captions and data.subtitle_text:
+            src = data.subtitle_source or "captions"
+            label = "uploaded subtitles" if src == "manual" else "auto-captions"
+            log(f"Using existing {label} — skipping Whisper.")
+            data.transcript = data.subtitle_text
+            log(f"   {len(data.transcript):,} characters from {label}")
+            return data
+
+        # Slow path — run Whisper with live progress.
         duration = data.duration or 0.0
         if duration:
-            log(f"Transcribing… (audio is {duration:.0f}s long)")
+            log(f"Transcribing with Whisper… (audio is {duration:.0f}s long)")
         else:
-            log("Transcribing…")
+            log("Transcribing with Whisper…")
 
-        # Live UI: progress bar + scrolling transcript that builds up segment by segment
         bar = st.progress(0.0, text="0% · waiting for first segment…")
         live_box = st.empty()
         parts = []

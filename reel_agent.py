@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import glob
+import json
 import os
 import queue
 import re
@@ -79,6 +81,11 @@ class ReelData:
     duration: Optional[float] = None  # seconds; used to scale transcription progress
     video_path: Optional[str] = None
     transcript: Optional[str] = None
+    # If the source platform (e.g. YouTube) had existing captions, they land here
+    # so the caller can skip Whisper entirely. `subtitle_source` is "manual" for
+    # uploaded subs or "auto" for auto-generated.
+    subtitle_text: Optional[str] = None
+    subtitle_source: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -238,8 +245,13 @@ def scrape_and_download(
     out_dir: str,
     cookies_file: Optional[str],
     cookies_from_browser: Optional[str] = None,
+    try_subtitles: bool = True,
 ) -> ReelData:
-    """Fetch reel metadata and download the video to out_dir."""
+    """Fetch reel metadata and download the audio to out_dir.
+
+    If `try_subtitles` is True (default), also pulls any existing captions in the
+    same call. When captions are available (typical for YouTube), the caller can
+    skip Whisper entirely by using `data.subtitle_text`."""
     out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
     is_youtube = "youtube.com" in reel_url.lower() or "youtu.be" in reel_url.lower()
 
@@ -254,6 +266,13 @@ def scrape_and_download(
             "noprogress": True,
             "retries": 3,
         }
+        if try_subtitles:
+            # Pull both manual and auto-generated captions if available.
+            # json3 is YouTube's clean native format; fall back to vtt elsewhere.
+            opts["writesubtitles"] = True
+            opts["writeautomaticsub"] = True
+            opts["subtitleslangs"] = ["en", "en-US", "en-GB", "en-orig"]
+            opts["subtitlesformat"] = "json3/srv3/vtt/best"
         if use_cookies:
             if cookies_file:
                 opts["cookiefile"] = cookies_file
@@ -298,6 +317,10 @@ def scrape_and_download(
     if views is None and "instagram.com" in reel_url.lower():
         views = fetch_instagram_view_count(reel_url)
 
+    subtitle_text, subtitle_source = (None, None)
+    if try_subtitles:
+        subtitle_text, subtitle_source = _find_and_parse_subs(out_dir, info)
+
     return ReelData(
         likes=info.get("like_count"),
         views=views,
@@ -306,7 +329,120 @@ def scrape_and_download(
         username=info.get("uploader_id") or info.get("uploader") or info.get("channel"),
         duration=info.get("duration"),
         video_path=video_path,
+        subtitle_text=subtitle_text,
+        subtitle_source=subtitle_source,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Subtitle helpers — use existing captions instead of running Whisper          #
+# --------------------------------------------------------------------------- #
+
+def _find_and_parse_subs(out_dir: str, info: dict) -> Tuple[Optional[str], Optional[str]]:
+    """Look for any subtitle files yt-dlp dropped into out_dir and parse the
+    best one. Returns (text, source) where source is 'manual', 'auto', or None."""
+    EN_KEYS = ("en", "en-US", "en-GB", "en-orig")
+    has_manual = any(info.get("subtitles", {}).get(k) for k in EN_KEYS)
+    has_auto = any(info.get("automatic_captions", {}).get(k) for k in EN_KEYS)
+    if not (has_manual or has_auto):
+        return None, None
+    source = "manual" if has_manual else "auto"
+
+    # Priority: json3 → srv3 → vtt → srt. json3 is the cleanest YouTube format.
+    for ext, parser in (
+        ("json3", _parse_json3),
+        ("srv3", _parse_srv3),
+        ("vtt", _parse_vtt),
+        ("srt", _parse_srt),
+    ):
+        for path in sorted(glob.glob(os.path.join(out_dir, f"*.{ext}"))):
+            try:
+                text = parser(path)
+            except Exception:
+                continue
+            if text and len(text) > 10:
+                return text, source
+    return None, None
+
+
+def _parse_json3(path: str) -> str:
+    """YouTube's `json3` caption format. Cleanest parse — no rolling-caption mess."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    parts = []
+    for event in data.get("events", []):
+        for seg in event.get("segs", []):
+            t = seg.get("utf8", "")
+            if t and t != "\n":
+                parts.append(t)
+    return _tidy(" ".join(parts))
+
+
+def _parse_srv3(path: str) -> str:
+    """YouTube's `srv3` XML caption format. Similar to TTML."""
+    import xml.etree.ElementTree as ET
+    tree = ET.parse(path)
+    root = tree.getroot()
+    parts = []
+    # srv3 has <p> elements with text inside (sometimes split across <s> spans)
+    for p in root.iter():
+        if p.tag.endswith("}p") or p.tag == "p":
+            text = "".join(p.itertext())
+            if text and text.strip():
+                parts.append(text.strip())
+    return _tidy(" ".join(parts))
+
+
+_VTT_TIMESTAMP_RE = re.compile(r"^\d+:\d+:\d+\.\d+\s+-->")
+_VTT_INLINE_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _parse_vtt(path: str) -> str:
+    """WebVTT format. Strips headers, cue timestamps, inline tags. Dedupes
+    consecutive duplicate lines (YouTube auto-captions often have rolling
+    repetition)."""
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    lines = []
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("WEBVTT"):
+            continue
+        if line.startswith(("Kind:", "Language:", "NOTE")):
+            continue
+        if _VTT_TIMESTAMP_RE.match(line):
+            continue
+        line = _VTT_INLINE_TAG_RE.sub("", line)
+        if line:
+            lines.append(line)
+    # Dedupe consecutive identical lines (rolling captions)
+    deduped: list = []
+    for line in lines:
+        if not deduped or deduped[-1] != line:
+            deduped.append(line)
+    return _tidy(" ".join(deduped))
+
+
+def _parse_srt(path: str) -> str:
+    """SubRip format. Strip indices and timestamps; keep just text."""
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    lines = []
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line or line.isdigit() or "-->" in line:
+            continue
+        line = _VTT_INLINE_TAG_RE.sub("", line)
+        if line:
+            lines.append(line)
+    return _tidy(" ".join(lines))
+
+
+def _tidy(text: str) -> str:
+    """Collapse runs of whitespace; strip."""
+    return re.sub(r"\s+", " ", text).strip()
 
 
 _IG_SHORTCODE_RE = re.compile(r"/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)")

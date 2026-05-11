@@ -1,4 +1,4 @@
-yt-dlp>=2026.5.1   # YouTube's anti-bot changes break older versions every few weeks
+yt-dlp>=2026.3.17  # Latest stable. YouTube's anti-bot changes break older versions every few weeks.
 notion-client>=2.2.1
 python-dotenv>=1.0.1
 instaloader>=4.13.0   # used as a fallback to get Instagram view counts (yt-dlp doesn't expose them)

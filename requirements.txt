@@ -13,6 +13,6 @@ groq>=0.13.0
 # Skipped automatically on Linux/Windows — only installs on Apple Silicon Macs.
 mlx-whisper>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"
 
-# Local transcription, cross-platform (used by `python reel_agent.py --local`)
-# Uncomment to install, OR run:  pip install faster-whisper
-# faster-whisper>=1.0.3
+# Local transcription, cross-platform (used as the no-key fallback when deployed
+# to Streamlit Cloud). Skipped on Mac since mlx-whisper is faster on Apple Silicon.
+faster-whisper>=1.0.3; sys_platform != "darwin"

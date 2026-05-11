@@ -28,13 +28,18 @@ from reel_agent import (
     ReelData,
     fetch_pending_rows,
     get_url_from_page,
+    load_local_model,
     parse_notion_db_id,
     resolve_data_source_id,
     scrape_and_download,
     transcribe_with_groq,
+    transcribe_with_local,
     transcribe_with_mlx,
     update_notion_row,
 )
+
+# Faster-whisper model sizes that fit in Streamlit Cloud's 1 GB RAM.
+FW_MODEL_SIZES = ["tiny", "base", "small"]
 
 load_dotenv()
 
@@ -55,6 +60,11 @@ def get_groq_client(api_key: str):
     return Groq(api_key=api_key)
 
 
+@st.cache_resource(show_spinner="Loading the Whisper model on the server (one-time, ~30s)…")
+def get_faster_whisper_model(model_size: str):
+    return load_local_model(model_size)
+
+
 @st.cache_resource
 def get_notion_client(token: str):
     from notion_client import Client as NotionClient
@@ -71,20 +81,31 @@ with st.sidebar:
 
     st.markdown("**Where to transcribe**")
     if IS_APPLE_SILICON:
-        backend = st.radio(
-            "backend",
-            ["On your Mac (free, offline)", "Groq (cloud, fast)"],
-            index=0,
-            label_visibility="collapsed",
-            help="On-device uses Apple Silicon and is completely free. Groq is hosted Whisper — usually faster on the first run, has a free tier.",
-        )
-        is_local = backend.startswith("On your Mac")
+        backend_options = {
+            "mlx": "On your Mac (free, offline, fast)",
+            "groq": "Groq cloud (fast, needs API key)",
+        }
+        default_idx = 0
     else:
-        # On servers / non-Mac clients, only Groq is available.
-        st.caption("Transcribing via **Groq cloud** (offline mode requires running this app on an Apple Silicon Mac).")
-        is_local = False
+        backend_options = {
+            "fw": "On the server (free, no key, slower)",
+            "groq": "Groq cloud (fast, needs API key)",
+        }
+        default_idx = 0
 
-    if is_local:
+    backend_id = st.radio(
+        "backend",
+        options=list(backend_options.keys()),
+        format_func=lambda k: backend_options[k],
+        index=default_idx,
+        label_visibility="collapsed",
+        help="Pick where the audio gets transcribed. The free options work without any signup but are slower than Groq.",
+    )
+    is_mlx = backend_id == "mlx"
+    is_fw = backend_id == "fw"
+    is_groq = backend_id == "groq"
+
+    if is_mlx:
         model_size = st.selectbox(
             "Model quality",
             list(MLX_MODEL_REPOS.keys()),
@@ -92,6 +113,14 @@ with st.sidebar:
             help="turbo = best speed/quality balance (recommended). large-v3 = highest accuracy. tiny/base = fastest.",
         )
         st.caption("First time you pick a model, it downloads (~1.5 GB for turbo). After that, everything stays on your Mac.")
+    elif is_fw:
+        model_size = st.selectbox(
+            "Model quality",
+            FW_MODEL_SIZES,
+            index=2,  # small
+            help="small = best balance for the free tier. base = faster, less accurate. tiny = fastest, lowest accuracy.",
+        )
+        st.caption("Runs entirely on the server — no signup, no key. ~30-90 sec per reel. The model loads once when you first transcribe (~30s).")
     else:
         model_size = None
 
@@ -110,8 +139,8 @@ with st.sidebar:
         browser = "none"
         cookies_from_browser = None
 
-    # Groq API key — only shown when Groq backend is selected (or always on non-Mac).
-    if not is_local:
+    # Groq API key — only shown when Groq backend is selected.
+    if is_groq:
         st.markdown("---")
         st.markdown("**Groq API key**")
         groq_api_key = st.text_input(
@@ -140,13 +169,16 @@ with st.sidebar:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def get_transcribe_fn():
-    if is_local:
+    if is_mlx:
         return lambda path: transcribe_with_mlx(path, model_size=model_size)
-    else:
-        if not groq_api_key:
-            raise RuntimeError("No Groq API key set. Add one in the sidebar.")
-        groq = get_groq_client(groq_api_key)
-        return lambda path: transcribe_with_groq(groq, path)
+    if is_fw:
+        model = get_faster_whisper_model(model_size)
+        return lambda path: transcribe_with_local(model, path)
+    # is_groq
+    if not groq_api_key:
+        raise RuntimeError("No Groq API key set. Add one in the sidebar.")
+    groq = get_groq_client(groq_api_key)
+    return lambda path: transcribe_with_groq(groq, path)
 
 
 def _fmt(n: Optional[int]) -> str:
@@ -199,8 +231,13 @@ def render_result_card(url: str, data: Optional[ReelData], error: Optional[str])
 st.title("Reel Transcriber")
 st.write("Pull metrics and transcribe Instagram reels — paste a few links or sync a whole Notion database.")
 
-backend_label = f"on your Mac · `{model_size}`" if is_local else "via Groq cloud"
-st.caption(f"Currently transcribing **{backend_label}**, using cookies from **{browser}**.")
+if is_mlx:
+    backend_label = f"on your Mac · `{model_size}`"
+elif is_fw:
+    backend_label = f"on the server · `{model_size}`"
+else:
+    backend_label = "via Groq cloud"
+st.caption(f"Transcribing **{backend_label}** · IG cookies from **{browser}**.")
 
 st.write("")  # breathing room
 

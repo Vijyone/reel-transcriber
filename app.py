@@ -278,6 +278,10 @@ with st.sidebar:
     st.caption("Tweak how the app transcribes and where it gets data.")
 
     st.markdown("**Where to transcribe**")
+    # Heuristic: if Streamlit is serving from a /mount/src/ path (set by Streamlit
+    # Cloud) or running headless on a non-Mac, we're probably on a hosted server.
+    # Otherwise we're running locally on the user's own machine.
+    _on_streamlit_cloud = os.path.exists("/mount/src") or os.environ.get("STREAMLIT_SHARING") == "true"
     if IS_APPLE_SILICON:
         backend_options = {
             "mlx": "On your Mac (free, offline, fast)",
@@ -285,8 +289,13 @@ with st.sidebar:
         }
         default_idx = 0
     else:
+        fw_label = (
+            "On the server (free, no key, slower)"
+            if _on_streamlit_cloud
+            else "On this computer (free, no key, slower)"
+        )
         backend_options = {
-            "fw": "On the server (free, no key, slower)",
+            "fw": fw_label,
             "groq": "Groq cloud (fast, needs API key)",
         }
         default_idx = 0

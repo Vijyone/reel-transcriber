@@ -439,7 +439,11 @@ st.caption(f"Transcribing **{backend_label}** · IG cookies from **{browser}**."
 
 st.write("")  # breathing room
 
-tab_paste, tab_notion = st.tabs(["  Try a few reels  ", "  Sync with Notion  "])
+tab_paste, tab_notion, tab_offline = st.tabs([
+    "  Try a few reels  ",
+    "  Sync with Notion  ",
+    "  Run offline  ",
+])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tab 1: Quick Paste
@@ -642,3 +646,78 @@ with tab_notion:
                             else:
                                 final = f"{ok} saved, {failed} hit a snag."
                             status.update(label=final, state="complete" if failed == 0 else "error")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 3: Run offline
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab_offline:
+    st.markdown("##### Run the whole thing on your own computer")
+    st.caption(
+        "Useful if you want truly offline transcription, faster results, "
+        "better accuracy with the larger Whisper models, or full privacy."
+    )
+
+    st.markdown("**Why bother?**")
+    st.markdown(
+        """
+- 🔒 **Privacy** — audio never leaves your machine
+- ⚡ **Speed** — on Apple Silicon, mlx-whisper transcribes a 30-sec reel in ~3 sec
+- 🎯 **Accuracy** — run `large-v3` (the best Whisper model), not just `small`
+- 📵 **Offline** — works on a plane, in the woods, without WiFi
+- ♾️ **No rate limits** — process hundreds of reels in a row
+        """
+    )
+
+    st.markdown("**Setup (5 min, one time)**")
+
+    st.markdown("**1. Make sure you have Python 3.12 and ffmpeg installed**")
+    st.markdown(
+        "On macOS with [Homebrew](https://brew.sh):"
+    )
+    st.code("brew install python@3.12 ffmpeg", language="bash")
+    st.caption("On Windows: install Python from python.org and ffmpeg via `winget install ffmpeg`. On Linux: `apt install python3.12 ffmpeg` or your distro's equivalent.")
+
+    st.markdown("**2. Clone the repo and install**")
+    st.code(
+        """git clone https://github.com/Vijyone/reel-transcriber.git
+cd reel-transcriber
+python3.12 -m venv .venv
+source .venv/bin/activate          # on Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt""",
+        language="bash",
+    )
+
+    st.markdown("**3. Add your secrets**")
+    st.markdown(
+        "Copy `.env.example` to `.env` and paste in your Notion token + database ID. "
+        "(Groq key is optional — only needed if you want the cloud option as a backup.)"
+    )
+    st.code("cp .env.example .env  &&  open .env", language="bash")
+
+    st.markdown("**4. Run it**")
+    st.code("./run.sh", language="bash")
+    st.markdown("The app opens at **http://localhost:8501**.")
+
+    st.divider()
+
+    st.markdown("##### Just want the Whisper model file?")
+    st.caption(
+        "If you're using a different transcription tool (e.g. [Vibe](https://thewh1teagle.github.io/vibe/) "
+        "or [whisper.cpp](https://github.com/ggerganov/whisper.cpp)) and just need the model:"
+    )
+    st.markdown(
+        """
+| Model | Size | Best for | Direct download |
+|---|---|---|---|
+| `tiny` | 75 MB | Speed over accuracy | [HuggingFace ↗](https://huggingface.co/Systran/faster-whisper-tiny) |
+| `base` | 150 MB | Quick, decent quality | [HuggingFace ↗](https://huggingface.co/Systran/faster-whisper-base) |
+| `small` | 500 MB | Balanced (this app's default) | [HuggingFace ↗](https://huggingface.co/Systran/faster-whisper-small) |
+| `medium` | 1.5 GB | Strong accuracy | [HuggingFace ↗](https://huggingface.co/Systran/faster-whisper-medium) |
+| `large-v3-turbo` | 1.5 GB | Best speed/quality balance | [HuggingFace ↗](https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo) |
+| `large-v3` | 3 GB | Highest accuracy | [HuggingFace ↗](https://huggingface.co/Systran/faster-whisper-large-v3) |
+
+The local install above downloads these automatically the first time you pick a model — you don't need to fetch them manually.
+        """
+    )

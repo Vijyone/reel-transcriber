@@ -670,35 +670,97 @@ with tab_offline:
         """
     )
 
-    st.markdown("**Setup (5 min, one time)**")
+    st.markdown("**Setup — pick your operating system**")
 
-    st.markdown("**1. Make sure you have Python 3.12 and ffmpeg installed**")
-    st.markdown(
-        "On macOS with [Homebrew](https://brew.sh):"
-    )
-    st.code("brew install python@3.12 ffmpeg", language="bash")
-    st.caption("On Windows: install Python from python.org and ffmpeg via `winget install ffmpeg`. On Linux: `apt install python3.12 ffmpeg` or your distro's equivalent.")
+    os_mac, os_win, os_linux = st.tabs(["  🍎 macOS  ", "  🪟 Windows  ", "  🐧 Linux  "])
 
-    st.markdown("**2. Clone the repo and install**")
-    st.code(
-        """git clone https://github.com/Vijyone/reel-transcriber.git
+    # ── macOS ──────────────────────────────────────────────────────────────
+    with os_mac:
+        st.markdown("**1. Install Python 3.12 + ffmpeg**")
+        st.caption("Requires [Homebrew](https://brew.sh). If you don't have it: paste their one-liner first.")
+        st.code("brew install python@3.12 ffmpeg git", language="bash")
+
+        st.markdown("**2. Clone and install**")
+        st.code(
+            """git clone https://github.com/Vijyone/reel-transcriber.git
 cd reel-transcriber
 python3.12 -m venv .venv
-source .venv/bin/activate          # on Windows: .venv\\Scripts\\activate
+source .venv/bin/activate
 pip install -r requirements.txt""",
-        language="bash",
-    )
+            language="bash",
+        )
 
-    st.markdown("**3. Add your secrets**")
-    st.markdown(
-        "Copy `.env.example` to `.env` and paste in your Notion token + database ID. "
-        "(Groq key is optional — only needed if you want the cloud option as a backup.)"
-    )
-    st.code("cp .env.example .env  &&  open .env", language="bash")
+        st.markdown("**3. Add your secrets**")
+        st.code("cp .env.example .env && open .env", language="bash")
+        st.caption("Paste your Notion token + database ID into the file that opens. Groq key is optional.")
 
-    st.markdown("**4. Run it**")
-    st.code("./run.sh", language="bash")
-    st.markdown("The app opens at **http://localhost:8501**.")
+        st.markdown("**4. Run it**")
+        st.code("./run.sh", language="bash")
+        st.markdown("The app opens at **http://localhost:8501**.")
+        st.caption(
+            "On Apple Silicon Macs you also get the `mlx-whisper` backend — "
+            "5-10× faster than the server-side `small` model and supports `large-v3-turbo`."
+        )
+
+    # ── Windows ────────────────────────────────────────────────────────────
+    with os_win:
+        st.markdown("**1. Install Python 3.12 + ffmpeg + Git**")
+        st.caption("Open **PowerShell** (search `PowerShell` in the Start menu).")
+        st.code(
+            "winget install Python.Python.3.12 Gyan.FFmpeg Git.Git",
+            language="powershell",
+        )
+        st.caption("Close PowerShell and reopen it after install so the new programs are on your PATH.")
+
+        st.markdown("**2. Clone and install**")
+        st.code(
+            """git clone https://github.com/Vijyone/reel-transcriber.git
+cd reel-transcriber
+python -m venv .venv
+.venv\\Scripts\\activate
+pip install -r requirements.txt""",
+            language="powershell",
+        )
+
+        st.markdown("**3. Add your secrets**")
+        st.code("copy .env.example .env\nnotepad .env", language="powershell")
+        st.caption("Paste your Notion token + database ID into Notepad and save. Groq key is optional.")
+
+        st.markdown("**4. Run it**")
+        st.code("run.bat", language="powershell")
+        st.markdown("The app opens at **http://localhost:8501**. You can also double-click `run.bat` from File Explorer.")
+        st.caption(
+            "Windows uses `faster-whisper` for the local backend (CPU). For a meaningful speedup, "
+            "pick a small model — `base` or `small` — in the sidebar."
+        )
+
+    # ── Linux ──────────────────────────────────────────────────────────────
+    with os_linux:
+        st.markdown("**1. Install Python 3.12 + ffmpeg + Git**")
+        st.caption("Debian/Ubuntu:")
+        st.code(
+            "sudo apt update && sudo apt install -y python3.12 python3.12-venv ffmpeg git",
+            language="bash",
+        )
+        st.caption("Fedora: `sudo dnf install python3.12 ffmpeg git` · Arch: `sudo pacman -S python ffmpeg git`")
+
+        st.markdown("**2. Clone and install**")
+        st.code(
+            """git clone https://github.com/Vijyone/reel-transcriber.git
+cd reel-transcriber
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt""",
+            language="bash",
+        )
+
+        st.markdown("**3. Add your secrets**")
+        st.code("cp .env.example .env && nano .env", language="bash")
+        st.caption("Paste your Notion token + database ID. Save with `Ctrl+O`, `Enter`, `Ctrl+X`. Groq key is optional.")
+
+        st.markdown("**4. Run it**")
+        st.code("./run.sh", language="bash")
+        st.markdown("The app opens at **http://localhost:8501**.")
 
     st.divider()
 

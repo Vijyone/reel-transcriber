@@ -1,24 +1,26 @@
 """
-Reel Transcriber Agent  (yt-dlp + Groq | local faster-whisper)
---------------------------------------------------------------
-Reads Instagram reel URLs from a Notion database, scrapes engagement metrics
-(likes / views / comments / caption) via yt-dlp, transcribes the audio either
-with Groq's hosted whisper-large-v3 (default) OR locally via faster-whisper
-(--local), and writes everything back to the same Notion row.
+Reel Transcriber Agent  (yt-dlp + mlx-whisper, Apple Silicon)
+-------------------------------------------------------------
+Reads video URLs from a Notion database, scrapes engagement metrics
+(likes / views / comments / caption) via yt-dlp, transcribes the audio locally
+on Apple Silicon via mlx-whisper, and writes everything back to the same Notion row.
 
 Pipeline:
-    Notion (URLs)  ->  yt-dlp (metrics + video download)
-                    ->  Whisper transcription (Groq or local)
+    Notion (URLs)  ->  yt-dlp (metrics + audio download)
+                    ->  mlx-whisper transcription (on your Mac)
                     ->  Notion (write back)
 
+Most people use the Streamlit UI (`./run.sh`). This CLI is here if you'd
+rather script it.
+
 Run on demand:
-    python reel_agent.py                       # default: Groq cloud transcription
-    python reel_agent.py --local               # use faster-whisper locally (free, offline)
-    python reel_agent.py --local --model medium  # smaller model = faster, less accurate
-    python reel_agent.py --limit 5             # only process 5 rows
-    python reel_agent.py --force                # re-process rows that already have a transcript
+    python reel_agent.py                        # transcribe rows missing a transcript
+    python reel_agent.py --model large-v3       # higher accuracy (slower, bigger)
+    python reel_agent.py --limit 5              # only process 5 rows
+    python reel_agent.py --force                # re-process rows already done
     python reel_agent.py --dry-run              # show what would happen, write nothing
-    python reel_agent.py --cookies ig.txt       # use exported cookies for gated reels
+    python reel_agent.py --browser chrome       # pull cookies from a logged-in browser
+    python reel_agent.py --title "expensive"    # only rows whose Name contains this
 """
 
 from __future__ import annotations
@@ -52,14 +54,9 @@ PROP_USERNAME   = None           # type: Rich text  (column not present in DB)
 PROP_STATUS     = None           # type: Select     (column not present in DB)
 PROP_LAST_RUN   = None           # type: Date       (column not present in DB)
 
-GROQ_MODEL = "whisper-large-v3"   # alt: "whisper-large-v3-turbo" (faster, slightly less accurate)
-GROQ_MAX_MB = 24                   # Groq limit is 25MB per request; leave a buffer
-
-# faster-whisper defaults for --local mode.
-# Model sizes (RAM):  tiny~75MB  base~150MB  small~500MB  medium~1.5GB  large-v3~3GB
-LOCAL_MODEL_DEFAULT = "large-v3"
-LOCAL_DEVICE = "auto"              # "cuda" / "cpu" / "auto"  (auto picks GPU when available)
-LOCAL_COMPUTE = "default"          # "int8" for low memory, "float16" for GPU, "default" lets CT2 pick
+# Default mlx-whisper model. Override with --model on the CLI.
+# Sizes:  tiny~75MB  base~150MB  small~500MB  medium~1.5GB  large-v3-turbo~1.5GB  large-v3~3GB
+MLX_MODEL_DEFAULT = "large-v3-turbo"
 
 # Notion rich-text fields cap at 2000 chars per block.
 NOTION_TEXT_BLOCK = 2000
@@ -224,8 +221,8 @@ def scrape_and_download(
     is_youtube = "youtube.com" in reel_url.lower() or "youtu.be" in reel_url.lower()
 
     def _build_opts(use_cookies: bool) -> dict:
-        # Audio-only: ~10x smaller than full video, fits under Groq's 24MB limit, transcription
-        # quality is identical (Whisper only uses the audio track anyway).
+        # Audio-only: ~10x smaller than full video. Whisper only reads the audio track
+        # anyway, so transcription quality is identical.
         opts = {
             "outtmpl": out_template,
             "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
@@ -320,52 +317,10 @@ def fetch_instagram_view_count(reel_url: str) -> Optional[int]:
 
 
 # --------------------------------------------------------------------------- #
-# Whisper transcription — two backends                                         #
+# Whisper transcription (mlx-whisper on Apple Silicon)                         #
 # --------------------------------------------------------------------------- #
 
-def transcribe_with_groq(groq, video_path: str) -> str:
-    """Cloud transcription via Groq (whisper-large-v3)."""
-    if not video_path or not os.path.exists(video_path):
-        return ""
-
-    size_mb = os.path.getsize(video_path) / (1024 * 1024)
-    if size_mb > GROQ_MAX_MB:
-        raise RuntimeError(
-            f"Video is {size_mb:.1f}MB which exceeds Groq's {GROQ_MAX_MB}MB limit"
-        )
-
-    with open(video_path, "rb") as f:
-        result = groq.audio.transcriptions.create(
-            model=GROQ_MODEL,
-            file=(os.path.basename(video_path), f.read()),
-            response_format="text",
-        )
-    return result if isinstance(result, str) else getattr(result, "text", str(result))
-
-
-def transcribe_with_local(model, video_path: str) -> str:
-    """Local transcription via faster-whisper. No file size limit, no quotas."""
-    if not video_path or not os.path.exists(video_path):
-        return ""
-
-    segments, _info = model.transcribe(video_path, beam_size=5, vad_filter=True)
-    return " ".join(seg.text.strip() for seg in segments).strip()
-
-
-def load_local_model(model_size: str):
-    """Lazy-import faster-whisper so users on Groq don't need it installed."""
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        sys.exit(
-            "faster-whisper is not installed. Install it with:\n"
-            "    pip install faster-whisper"
-        )
-    print(f"Loading local Whisper model '{model_size}' (device={LOCAL_DEVICE})...")
-    return WhisperModel(model_size, device=LOCAL_DEVICE, compute_type=LOCAL_COMPUTE)
-
-
-# mlx-whisper: Apple Silicon native, ~5-10x faster than faster-whisper on M-series Macs.
+# Apple Silicon native, ~5-10x faster than CPU-based alternatives on M-series Macs.
 MLX_MODEL_REPOS = {
     "tiny":              "mlx-community/whisper-tiny",
     "base":              "mlx-community/whisper-base",
@@ -433,23 +388,18 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Max rows to process")
     parser.add_argument("--force", action="store_true", help="Re-process rows even if Transcript is filled")
     parser.add_argument("--dry-run", action="store_true", help="Print what would happen but don't write to Notion")
-    parser.add_argument("--cookies", default=None, help="Path to a Netscape-format cookies file (for gated reels)")
+    parser.add_argument("--cookies", default=None, help="Path to a Netscape-format cookies file (for gated content)")
     parser.add_argument(
         "--browser",
         default=None,
-        help="Pull Instagram cookies from a logged-in browser to unlock view counts. "
-             "e.g. chrome, safari, firefox, edge, brave. You must be logged into instagram.com in that browser.",
+        help="Pull cookies from a logged-in browser to skip rate limits / unlock gated content. "
+             "e.g. chrome, safari, firefox, edge, brave.",
     )
-    parser.add_argument("--title", default=None, help="Only process rows whose Name (title) contains this substring")
-    parser.add_argument(
-        "--local",
-        action="store_true",
-        help="Transcribe locally with faster-whisper instead of calling Groq",
-    )
+    parser.add_argument("--title", default=None, help="Only process rows whose Name contains this substring")
     parser.add_argument(
         "--model",
-        default=LOCAL_MODEL_DEFAULT,
-        help=f"faster-whisper model size when using --local (default: {LOCAL_MODEL_DEFAULT}). "
+        default=MLX_MODEL_DEFAULT,
+        help=f"mlx-whisper model size (default: {MLX_MODEL_DEFAULT}). "
              "Options: tiny, base, small, medium, large-v3, large-v3-turbo",
     )
     args = parser.parse_args()
@@ -459,17 +409,8 @@ def main():
     notion_db_id = os.environ["NOTION_DATABASE_ID"]
     notion = NotionClient(auth=notion_token)
 
-    # Wire up the chosen transcription backend.
-    if args.local:
-        local_model = load_local_model(args.model)
-        transcribe_fn = lambda path: transcribe_with_local(local_model, path)
-        backend = f"local faster-whisper ({args.model})"
-    else:
-        from groq import Groq
-        groq = Groq(api_key=os.environ["GROQ_API_KEY"])
-        transcribe_fn = lambda path: transcribe_with_groq(groq, path)
-        backend = f"Groq cloud ({GROQ_MODEL})"
-    print(f"Backend: {backend}")
+    transcribe_fn = lambda path: transcribe_with_mlx(path, model_size=args.model)
+    print(f"Backend: mlx-whisper ({args.model}) on your Mac")
 
     processed = ok = failed = skipped = 0
     for page in fetch_pending_rows(notion, notion_db_id, args.force, title_contains=args.title):

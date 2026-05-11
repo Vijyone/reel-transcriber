@@ -152,12 +152,31 @@ def get_url_from_page(page) -> Optional[str]:
 
 
 def chunk_rich_text(text: str):
+    """Split text into Notion rich_text blocks of ≤ 2000 UTF-16 code units each.
+
+    Notion's 2000-char limit is measured in UTF-16 code units, not Python
+    characters. An emoji (surrogate pair) counts as 2, so naïvely slicing by
+    Python char index can push a chunk to 2001+ on the wire. We walk the
+    string and split on UTF-16 boundaries instead."""
     if not text:
         return [{"text": {"content": ""}}]
-    return [
-        {"text": {"content": text[i : i + NOTION_TEXT_BLOCK]}}
-        for i in range(0, len(text), NOTION_TEXT_BLOCK)
-    ]
+
+    chunks = []
+    current = []
+    current_u16 = 0
+    for ch in text:
+        # encode each char to UTF-16-LE; len // 2 gives the code-unit count (1 or 2)
+        ch_u16 = len(ch.encode("utf-16-le")) // 2
+        if current_u16 + ch_u16 > NOTION_TEXT_BLOCK:
+            chunks.append({"text": {"content": "".join(current)}})
+            current = [ch]
+            current_u16 = ch_u16
+        else:
+            current.append(ch)
+            current_u16 += ch_u16
+    if current:
+        chunks.append({"text": {"content": "".join(current)}})
+    return chunks
 
 
 def get_available_notion_columns(notion: NotionClient, db_id: str) -> set:

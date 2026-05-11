@@ -405,6 +405,24 @@ def render_result_card(url: str, data: Optional[ReelData], error: Optional[str])
     if error:
         with st.expander(f"⚠️  Couldn't process  ·  {url}", expanded=False):
             st.error(error)
+            err_lower = error.lower()
+            # YouTube on cloud servers is famously flaky thanks to Google's anti-bot
+            # measures. Give the user a concrete next step instead of a cryptic error.
+            if "youtube" in url.lower() and (
+                "format is not available" in err_lower
+                or "video unavailable" in err_lower
+                or "sign in" in err_lower
+                or "bot" in err_lower
+            ):
+                st.info(
+                    "🤖 **YouTube tip:** YouTube actively blocks scraping from "
+                    "cloud server IPs (which is what this deployed app runs on). "
+                    "Instagram, TikTok, and most other sites work fine from the cloud — "
+                    "YouTube is the stubborn one.\n\n"
+                    "**To transcribe YouTube reliably**, run the app on your own "
+                    "machine — see the **Run offline** tab. From a home IP, "
+                    "YouTube works for nearly every public video."
+                )
         return
     d = data
     header_metrics = []

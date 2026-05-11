@@ -324,12 +324,15 @@ with st.sidebar:
 
     if IS_APPLE_SILICON:
         st.markdown("---")
-        st.markdown("**Instagram login**")
+        st.markdown("**Browser login (for gated content)**")
         browser = st.selectbox(
             "Pull cookies from",
             ["none", "chrome", "safari", "firefox", "edge", "brave"],
             index=1,
-            help="If you're logged into Instagram in this browser, the app borrows those cookies. Skips rate limits and unlocks more metadata.",
+            help=(
+                "If you're logged into Instagram, TikTok, Twitter, etc. in this browser, "
+                "the app borrows those cookies. Skips rate limits and unlocks private/gated videos."
+            ),
         )
         cookies_from_browser = None if browser == "none" else browser
     else:
@@ -427,7 +430,11 @@ def render_result_card(url: str, data: Optional[ReelData], error: Optional[str])
 # ──────────────────────────────────────────────────────────────────────────────
 
 st.title("Reel Transcriber")
-st.write("Pull metrics and transcribe Instagram reels — paste a few links or sync a whole Notion database.")
+st.write(
+    "Pull metrics and transcribe short videos from Instagram, YouTube, TikTok, "
+    "Twitter, and [1,000+ other sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) — "
+    "paste a few links or sync a whole Notion database."
+)
 
 if is_mlx:
     backend_label = f"on your Mac · `{model_size}`"
@@ -435,12 +442,12 @@ elif is_fw:
     backend_label = f"on the server · `{model_size}`"
 else:
     backend_label = "via Groq cloud"
-st.caption(f"Transcribing **{backend_label}** · IG cookies from **{browser}**.")
+st.caption(f"Transcribing **{backend_label}** · browser cookies from **{browser}**.")
 
 st.write("")  # breathing room
 
 tab_paste, tab_notion, tab_offline = st.tabs([
-    "  Try a few reels  ",
+    "  Try a few links  ",
     "  Sync with Notion  ",
     "  Run offline  ",
 ])
@@ -450,13 +457,21 @@ tab_paste, tab_notion, tab_offline = st.tabs([
 # ──────────────────────────────────────────────────────────────────────────────
 
 with tab_paste:
-    st.markdown("##### Drop in some Instagram reel links")
-    st.caption("One per line. Hit transcribe and you'll get the metrics + a full transcript for each.")
+    st.markdown("##### Drop in some video links")
+    st.caption(
+        "One per line. Works with Instagram reels, YouTube videos, TikToks, X posts, "
+        "and most other public video sites. Hit transcribe and you'll get the metrics + full transcript for each."
+    )
 
     urls_text = st.text_area(
-        "Reel URLs",
+        "Video URLs",
         height=140,
-        placeholder="https://www.instagram.com/reel/…\nhttps://www.instagram.com/reel/…",
+        placeholder=(
+            "https://www.instagram.com/reel/…\n"
+            "https://www.youtube.com/watch?v=…\n"
+            "https://www.tiktok.com/@user/video/…\n"
+            "https://x.com/user/status/…"
+        ),
         label_visibility="collapsed",
     )
 

@@ -240,6 +240,19 @@ def update_notion_row(
 # yt-dlp scrape + download                                                     #
 # --------------------------------------------------------------------------- #
 
+_ANTI_BOT_PHRASES = (
+    "format is not available",
+    "sign in to confirm",
+    "po token",
+    "forbidden",
+)
+
+
+def _is_youtube_anti_bot(err_msg: str) -> bool:
+    msg = err_msg.lower()
+    return any(p in msg for p in _ANTI_BOT_PHRASES)
+
+
 def scrape_and_download(
     reel_url: str,
     out_dir: str,
@@ -247,79 +260,106 @@ def scrape_and_download(
     cookies_from_browser: Optional[str] = None,
     try_subtitles: bool = True,
 ) -> ReelData:
-    """Fetch reel metadata and download the audio to out_dir.
+    """Fetch metadata and prepare a transcript source for `reel_url`.
 
-    If `try_subtitles` is True (default), also pulls any existing captions in the
-    same call. When captions are available (typical for YouTube), the caller can
-    skip Whisper entirely by using `data.subtitle_text`."""
+    Two phases:
+      1. If `try_subtitles=True`: a cheap metadata-only request that *also* pulls
+         any existing English captions (manual or auto). No audio is downloaded.
+         If captions are found, we stop here — the caller uses `data.subtitle_text`.
+      2. Only if no captions were available, a second request downloads the audio
+         for Whisper. This is the path for IG / TikTok / etc., and YouTube videos
+         that genuinely have no captions.
+
+    On YouTube anti-bot errors (often triggered when authenticated), each phase
+    retries once without cookies."""
     out_template = os.path.join(out_dir, "%(id)s.%(ext)s")
     is_youtube = "youtube.com" in reel_url.lower() or "youtu.be" in reel_url.lower()
+    using_cookies = bool(cookies_file or cookies_from_browser)
 
-    def _build_opts(use_cookies: bool) -> dict:
-        # Audio-only: ~10x smaller than full video. Whisper only reads the audio track
-        # anyway, so transcription quality is identical.
-        opts = {
+    def _common_cookie_opts(opts: dict, use_cookies: bool) -> dict:
+        if use_cookies:
+            if cookies_file:
+                opts["cookiefile"] = cookies_file
+            if cookies_from_browser:
+                opts["cookiesfrombrowser"] = (cookies_from_browser,)
+        return opts
+
+    def _subs_opts(use_cookies: bool) -> dict:
+        # Metadata + subtitle files only — no audio/video download.
+        # `skip_download=True` is what stops the audio download; the subtitle
+        # writers still fire and drop .json3/.vtt files into out_dir.
+        return _common_cookie_opts({
+            "outtmpl": out_template,
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "retries": 3,
+            "skip_download": True,
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitleslangs": ["en", "en-US", "en-GB", "en-orig"],
+            "subtitlesformat": "json3/srv3/vtt/best",
+        }, use_cookies)
+
+    def _audio_opts(use_cookies: bool) -> dict:
+        # Audio-only download for Whisper. ~10x smaller than full video; Whisper
+        # only reads the audio track anyway, so transcription quality is identical.
+        return _common_cookie_opts({
             "outtmpl": out_template,
             "format": "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
             "retries": 3,
-        }
-        if try_subtitles:
-            # Pull both manual and auto-generated captions if available.
-            # json3 is YouTube's clean native format; fall back to vtt elsewhere.
-            opts["writesubtitles"] = True
-            opts["writeautomaticsub"] = True
-            opts["subtitleslangs"] = ["en", "en-US", "en-GB", "en-orig"]
-            opts["subtitlesformat"] = "json3/srv3/vtt/best"
-        if use_cookies:
-            if cookies_file:
-                opts["cookiefile"] = cookies_file
-            if cookies_from_browser:
-                # yt-dlp wants a tuple: (browser_name,) or (browser_name, profile, keyring, container)
-                opts["cookiesfrombrowser"] = (cookies_from_browser,)
-        return opts
+        }, use_cookies)
 
-    def _run(use_cookies: bool):
-        with yt_dlp.YoutubeDL(_build_opts(use_cookies)) as ydl:
-            info = ydl.extract_info(reel_url, download=True)
-            video_path = ydl.prepare_filename(info)
-            if not os.path.exists(video_path):
-                base = os.path.splitext(video_path)[0]
-                for ext in (".mp4", ".mkv", ".webm", ".m4a"):
-                    if os.path.exists(base + ext):
-                        video_path = base + ext
-                        break
-            return info, video_path
+    def _run(opts: dict, want_path: bool):
+        """Single yt-dlp run with YouTube anti-bot retry. Returns (info, video_path).
+        video_path is None when want_path=False (subs phase)."""
 
-    using_cookies = bool(cookies_file or cookies_from_browser)
-    try:
-        info, video_path = _run(use_cookies=using_cookies)
-    except yt_dlp.utils.DownloadError as e:
-        # YouTube's anti-bot can filter ALL formats when the request is authenticated
-        # (an "audio_ext=m4a / vcodec=none" listing comes back empty). Cookies still help
-        # IG/TikTok, so we only retry anonymously for YouTube.
-        msg = str(e).lower()
-        anti_bot_signal = (
-            "format is not available" in msg
-            or "sign in to confirm" in msg
-            or "po token" in msg
-            or "forbidden" in msg
-        )
-        if is_youtube and using_cookies and anti_bot_signal:
-            info, video_path = _run(use_cookies=False)
-        else:
+        def _once(o):
+            with yt_dlp.YoutubeDL(o) as ydl:
+                info = ydl.extract_info(reel_url, download=True)
+                return info, (ydl.prepare_filename(info) if want_path else None)
+
+        try:
+            return _once(opts)
+        except yt_dlp.utils.DownloadError as e:
+            if is_youtube and using_cookies and _is_youtube_anti_bot(str(e)):
+                clean = {**opts}
+                clean.pop("cookiefile", None)
+                clean.pop("cookiesfrombrowser", None)
+                return _once(clean)
             raise
 
+    # ── Phase 1: try to grab existing captions (no audio download) ────────────
+    info = None
+    video_path = None
+    subtitle_text, subtitle_source = (None, None)
+
+    if try_subtitles:
+        try:
+            info, _ = _run(_subs_opts(using_cookies), want_path=False)
+            subtitle_text, subtitle_source = _find_and_parse_subs(out_dir, info)
+        except yt_dlp.utils.DownloadError:
+            # If even the metadata-only call fails, fall through to phase 2 —
+            # the audio-download call will surface a real error there.
+            info = None
+
+    # ── Phase 2: only download audio if we don't already have a transcript ───
+    if not subtitle_text:
+        info, video_path = _run(_audio_opts(using_cookies), want_path=True)
+        if video_path and not os.path.exists(video_path):
+            base = os.path.splitext(video_path)[0]
+            for ext in (".mp4", ".mkv", ".webm", ".m4a"):
+                if os.path.exists(base + ext):
+                    video_path = base + ext
+                    break
+
+    # Metadata (from whichever phase produced `info`)
     views = info.get("view_count") or info.get("play_count")
-    # yt-dlp's IG extractor doesn't return view_count for reels — fall back to instaloader.
     if views is None and "instagram.com" in reel_url.lower():
         views = fetch_instagram_view_count(reel_url)
-
-    subtitle_text, subtitle_source = (None, None)
-    if try_subtitles:
-        subtitle_text, subtitle_source = _find_and_parse_subs(out_dir, info)
 
     return ReelData(
         likes=info.get("like_count"),

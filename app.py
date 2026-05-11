@@ -227,7 +227,10 @@ def process_url(url: str, log) -> ReelData:
 
     `log` writes to the surrounding status block."""
     with tempfile.TemporaryDirectory() as tmp:
-        log("Grabbing audio + checking for captions…")
+        if use_existing_captions:
+            log("Checking for existing captions…")
+        else:
+            log("Grabbing audio…")
         t0 = time.time()
         data = scrape_and_download(
             url, tmp, None, cookies_from_browser, try_subtitles=use_existing_captions

@@ -780,16 +780,24 @@ with tab_creator:
                         st.error("Reconnect — the Notion integration that opened this DB was removed.")
                     else:
                         try:
-                            with st.spinner(
-                                f"Enumerating from {source.capitalize()}… "
-                                f"({'this can take a minute on big accounts' if source == 'instagram' else 'usually quick'})"
-                            ):
+                            has_date_filter = bool(from_date or to_date)
+                            if source == "youtube" and has_date_filter:
+                                spinner_msg = (
+                                    f"Fetching dates for up to {enum_limit or '∞'} videos — "
+                                    f"~1.5 sec each, so this can take a few minutes for big channels."
+                                )
+                            elif source == "instagram":
+                                spinner_msg = "Enumerating Instagram profile (can take a minute on big accounts)…"
+                            else:
+                                spinner_msg = "Enumerating channel…"
+                            with st.spinner(spinner_msg):
                                 if source == "youtube":
                                     listings = enumerate_youtube(
                                         url,
                                         limit=(enum_limit or None),
                                         include_shorts=include_shorts,
                                         cookies_from_browser=cookies_from_browser,
+                                        need_dates=has_date_filter,
                                     )
                                 else:
                                     listings = enumerate_instagram(

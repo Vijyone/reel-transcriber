@@ -349,17 +349,29 @@ def enumerate_youtube(
     limit: Optional[int] = None,
     include_shorts: bool = False,
     cookies_from_browser: Optional[str] = None,
+    need_dates: bool = False,
 ) -> List[VideoListing]:
     """Enumerate videos from a YouTube channel or playlist URL.
 
-    Uses yt-dlp's flat extraction — no audio downloads. Each entry returns
-    enough metadata to filter by date before the heavy lifting starts."""
+    Two modes:
+      - `need_dates=False` (default): yt-dlp's flat extraction. Fast (~1 sec
+        for any channel size) but `upload_date` comes back as None for
+        YouTube channel entries.
+      - `need_dates=True`: full extraction. Returns real upload dates but
+        costs ~1.5 sec per video. Use when the user has a date filter set —
+        the `limit` keeps the total wait time bounded.
+
+    For a bare channel URL like `youtube.com/@channel`, yt-dlp auto-resolves
+    to the Videos tab. No URL rewriting needed."""
     opts = {
         "quiet": True,
         "no_warnings": True,
-        "extract_flat": "in_playlist",
         "skip_download": True,
     }
+    # Without need_dates we use 'in_playlist' for speed; with it we drop the
+    # flat flag entirely so each entry gets fully extracted (slow but accurate).
+    if not need_dates:
+        opts["extract_flat"] = "in_playlist"
     if limit:
         opts["playlistend"] = limit
     if cookies_from_browser:
@@ -394,14 +406,23 @@ def _maybe_add_yt_entry(e: dict, include_shorts: bool, out: List[VideoListing]) 
             entry_url = f"https://www.youtube.com/watch?v={vid}"
         else:
             return
+
+    duration = e.get("duration")
+    # Detect Shorts: explicit URL hint, OR a duration ≤ 61s (YT's cutoff).
+    # Channel enumeration often rewrites /shorts/ URLs to /watch?v= form, so
+    # the URL hint alone misses many of them — the duration check catches the rest.
     is_short = "/shorts/" in entry_url
+    if not is_short and isinstance(duration, (int, float)) and 0 < duration <= 61:
+        is_short = True
+
     if is_short and not include_shorts:
         return
+
     out.append(VideoListing(
         url=entry_url,
         title=e.get("title", "") or "",
         upload_date=_ydmd_to_iso(e.get("upload_date")),
-        duration=e.get("duration"),
+        duration=duration,
         id=e.get("id", "") or "",
     ))
 

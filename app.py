@@ -10,10 +10,12 @@ After that, runs offline and free.
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
-from typing import Optional
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -32,6 +34,83 @@ from reel_agent import (
 )
 
 load_dotenv()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Multi-integration storage
+#   Persisted at ~/.config/reel-transcriber/integrations.json (chmod 600).
+#   Each entry: {"name": "Personal", "token": "ntn_..."}.
+# ──────────────────────────────────────────────────────────────────────────────
+
+INTEGRATIONS_FILE = Path.home() / ".config" / "reel-transcriber" / "integrations.json"
+
+
+def load_integrations() -> List[dict]:
+    if not INTEGRATIONS_FILE.exists():
+        return []
+    try:
+        data = json.loads(INTEGRATIONS_FILE.read_text())
+        if isinstance(data, list):
+            return [{"name": str(d.get("name", "")), "token": str(d.get("token", ""))}
+                    for d in data if isinstance(d, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def save_integrations(items: List[dict]) -> None:
+    INTEGRATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    INTEGRATIONS_FILE.write_text(json.dumps(items, indent=2))
+    try:
+        os.chmod(INTEGRATIONS_FILE, 0o600)  # owner-only read/write
+    except OSError:
+        pass
+
+
+def init_integrations() -> None:
+    """Load saved integrations into session_state. On first launch, seed from
+    the NOTION_TOKEN env var if present so existing users don't have to retype."""
+    if "integrations" in st.session_state:
+        return
+    items = load_integrations()
+    if not items and os.getenv("NOTION_TOKEN"):
+        items = [{"name": "Default", "token": os.getenv("NOTION_TOKEN")}]
+        save_integrations(items)
+    st.session_state["integrations"] = items
+
+
+def resolve_notion_for_db(
+    db_id: str, integrations: List[dict]
+) -> Tuple[object, str, dict]:
+    """Probe each saved token until one can access the database. Returns
+    (notion_client, integration_name, db_metadata). Raises if none work."""
+    from notion_client import Client as NotionClient
+    last_err: Optional[Exception] = None
+    tried = 0
+    for item in integrations:
+        token = (item.get("token") or "").strip()
+        if not token:
+            continue
+        tried += 1
+        try:
+            client = NotionClient(auth=token)
+            db = client.databases.retrieve(database_id=db_id)
+            return client, item.get("name", "(unnamed)"), db
+        except Exception as e:
+            last_err = e
+            continue
+    if tried == 0:
+        raise RuntimeError(
+            "No Notion integrations configured. Add one in the sidebar first."
+        )
+    raise RuntimeError(
+        f"None of your {tried} integration(s) can access this database. "
+        f"Make sure the integration is added to the database via ··· → "
+        f"Connections in Notion. Last error: {last_err}"
+    )
+
+
+init_integrations()
 
 st.set_page_config(
     page_title="Reel Transcriber",
@@ -200,18 +279,46 @@ with st.sidebar:
     cookies_from_browser = None if browser == "none" else browser
 
     st.markdown("---")
-    notion_token = st.text_input(
-        "Notion integration token",
-        type="password",
-        value=os.getenv("NOTION_TOKEN", ""),
-        help=(
-            "From notion.so/profile/integrations. The same token works for any "
-            "database the integration has been added to.\n\n"
-            "**Working with guests?** Notion integrations are workspace-level — "
-            "guests can't see them. Just share your token with them; they paste "
-            "it here. Or create a free shared workspace where everyone is a member."
-        ),
-        placeholder="ntn_…",
+    st.markdown("**Notion integrations**")
+    st.caption(
+        "Add one or more. When you paste a database URL, the app probes each "
+        "token to find which one has access."
+    )
+
+    integrations = st.session_state["integrations"]
+
+    # Edit existing integrations in-place
+    for i, item in enumerate(integrations):
+        c_name, c_tok, c_del = st.columns([1.2, 2.5, 0.4])
+        new_name = c_name.text_input(
+            "Name", value=item.get("name", ""), key=f"int_name_{i}",
+            label_visibility="collapsed", placeholder="Name",
+        )
+        new_token = c_tok.text_input(
+            "Token", value=item.get("token", ""), key=f"int_tok_{i}",
+            type="password", label_visibility="collapsed", placeholder="ntn_…",
+        )
+        delete = c_del.button("✕", key=f"int_del_{i}", help="Remove this integration")
+        if delete:
+            integrations.pop(i)
+            save_integrations(integrations)
+            # Invalidate cached DB→integration mapping since tokens changed.
+            st.session_state.pop("notion_db_integration", None)
+            st.rerun()
+        if new_name != item.get("name", "") or new_token != item.get("token", ""):
+            integrations[i] = {"name": new_name, "token": new_token}
+            save_integrations(integrations)
+            st.session_state.pop("notion_db_integration", None)
+
+    if st.button("+ Add integration", use_container_width=True):
+        integrations.append({"name": "", "token": ""})
+        save_integrations(integrations)
+        st.rerun()
+
+    st.caption(
+        "🔒 Tokens are stored locally at `~/.config/reel-transcriber/integrations.json` "
+        "(owner-only). Anyone with a token can access whatever the integration "
+        "has been added to — share carefully."
     )
 
 
@@ -385,10 +492,11 @@ with tab_paste:
 # ──────────────────────────────────────────────────────────────────────────────
 
 with tab_notion:
-    if not notion_token:
-        st.info("Add your Notion integration token in the sidebar to get going.")
+    valid_integrations = [it for it in integrations if (it.get("token") or "").strip()]
+    if not valid_integrations:
+        st.info("Add a Notion integration in the sidebar to get going.")
     else:
-        # Compact connect bar — single row, no caption noise
+        # Compact connect bar — paste a DB URL, the app auto-picks the right integration.
         default_db_input = st.session_state.get("notion_db_input", os.getenv("NOTION_DATABASE_ID", ""))
         db_col, btn_col = st.columns([5, 1])
         with db_col:
@@ -396,7 +504,10 @@ with tab_notion:
                 "Notion database URL or ID",
                 value=default_db_input,
                 placeholder="Paste your Notion database URL or ID…",
-                help="Make sure you've shared the database with your integration via … → Connections.",
+                help=(
+                    f"The app will probe your {len(valid_integrations)} saved "
+                    "integration(s) and use whichever one has access."
+                ),
                 label_visibility="collapsed",
             )
         with btn_col:
@@ -408,8 +519,7 @@ with tab_notion:
                 st.error("That doesn't look like a Notion link or ID. Try pasting the database URL from your browser.")
             else:
                 try:
-                    notion = get_notion_client(notion_token)
-                    db = notion.databases.retrieve(database_id=db_id)
+                    notion, integration_name, db = resolve_notion_for_db(db_id, valid_integrations)
                     title_arr = db.get("title", [])
                     db_name = title_arr[0]["plain_text"] if title_arr else "(untitled)"
                     ds_id = resolve_data_source_id(notion, db_id)
@@ -436,6 +546,7 @@ with tab_notion:
                     st.session_state["notion_db_total"] = total
                     st.session_state["notion_db_with_transcript"] = with_transcript
                     st.session_state["notion_available_cols"] = available_cols
+                    st.session_state["notion_db_integration"] = integration_name
                     st.session_state.pop("notion_rows", None)
                 except Exception as e:
                     st.error(f"Couldn't connect — {e}")
@@ -444,6 +555,7 @@ with tab_notion:
             total = st.session_state["notion_db_total"]
             done = st.session_state["notion_db_with_transcript"]
             empty = total - done
+            via = st.session_state.get("notion_db_integration", "")
 
             # Single-line status banner — DB name on the left, inline counts on the right
             st.markdown(
@@ -451,7 +563,7 @@ with tab_notion:
                     padding:10px 14px;background:#fbfbfa;border:1px solid #ececea;
                     border-radius:6px;margin:0.5rem 0;'>
                     <div><strong>📁 {st.session_state['notion_db_name']}</strong>
-                         <span style='color:#787774;margin-left:0.5rem;'>connected</span></div>
+                         <span style='color:#787774;margin-left:0.5rem;'>via <strong style='color:#37352f'>{via}</strong></span></div>
                     <div style='color:#787774;font-size:13px;'>
                         <strong style='color:#37352f'>{_fmt(total)}</strong> rows ·
                         <strong style='color:#37352f'>{_fmt(done)}</strong> transcribed ·
@@ -479,7 +591,15 @@ with tab_notion:
 
             if load_clicked:
                 try:
-                    notion = get_notion_client(notion_token)
+                    # Use the integration that matched this DB during connect.
+                    matched = next(
+                        (it for it in integrations
+                         if it.get("name") == st.session_state.get("notion_db_integration")),
+                        None,
+                    )
+                    if not matched:
+                        raise RuntimeError("Reconnect — the matching integration was removed.")
+                    notion = get_notion_client(matched["token"])
                     rows = list(fetch_pending_rows(
                         notion, st.session_state["notion_db_id"], do_force,
                         title_contains=title_filter or None,
@@ -518,7 +638,15 @@ with tab_notion:
                     st.dataframe(preview, use_container_width=True, hide_index=True, height=min(35 * (len(rows) + 1) + 3, 280))
 
                     if run_clicked:
-                        notion = get_notion_client(notion_token)
+                        matched = next(
+                            (it for it in integrations
+                             if it.get("name") == st.session_state.get("notion_db_integration")),
+                            None,
+                        )
+                        if not matched:
+                            st.error("Reconnect — the matching integration was removed.")
+                            st.stop()
+                        notion = get_notion_client(matched["token"])
                         available_cols = st.session_state.get("notion_available_cols")
                         ok = failed = 0
                         status_label = "Working on 1 row…" if count == 1 else f"Working through {count} rows…"

@@ -344,6 +344,25 @@ def _ydmd_to_iso(s: Optional[str]) -> Optional[str]:
     return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
 
 
+_YT_CHANNEL_RE = re.compile(
+    r"^https?://(?:www\.)?youtube\.com/(@[^/?#]+|c/[^/?#]+|user/[^/?#]+|channel/[^/?#]+)/?(?:[?#].*)?$"
+)
+
+
+def _normalize_youtube_url(url: str) -> str:
+    """Bare channel URLs (youtube.com/@channel) make yt-dlp emit a nested
+    list of TABS (Videos, Shorts, Live…), so playlistend=N caps at N tabs,
+    not N videos. Rewriting to /videos gives a flat list of videos where
+    playlistend works the way the caller expects."""
+    s = url.strip()
+    if "list=" in s:
+        return s  # leave playlist URLs alone
+    m = _YT_CHANNEL_RE.match(s)
+    if m:
+        return f"https://www.youtube.com/{m.group(1)}/videos"
+    return s
+
+
 def enumerate_youtube(
     url: str,
     limit: Optional[int] = None,
@@ -359,17 +378,14 @@ def enumerate_youtube(
         YouTube channel entries.
       - `need_dates=True`: full extraction. Returns real upload dates but
         costs ~1.5 sec per video. Use when the user has a date filter set —
-        the `limit` keeps the total wait time bounded.
+        the `limit` keeps the total wait time bounded."""
+    url = _normalize_youtube_url(url)
 
-    For a bare channel URL like `youtube.com/@channel`, yt-dlp auto-resolves
-    to the Videos tab. No URL rewriting needed."""
     opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
     }
-    # Without need_dates we use 'in_playlist' for speed; with it we drop the
-    # flat flag entirely so each entry gets fully extracted (slow but accurate).
     if not need_dates:
         opts["extract_flat"] = "in_playlist"
     if limit:
@@ -382,18 +398,31 @@ def enumerate_youtube(
 
     entries = info.get("entries") or []
     results: List[VideoListing] = []
+
+    def _add(entry: dict) -> bool:
+        """Return True if we hit the user-requested limit."""
+        _maybe_add_yt_entry(entry, include_shorts, results)
+        return bool(limit and len(results) >= limit)
+
     for e in entries:
         if not e:
             continue
-        # Sometimes "entries" are nested (channel → tabs → videos). Flatten one level.
+        # Defensive: handle nested tabs in case yt-dlp returns the channel-tab
+        # structure despite the URL rewrite above.
         nested = e.get("entries")
         if nested:
+            done = False
             for inner in nested:
                 if not inner:
                     continue
-                _maybe_add_yt_entry(inner, include_shorts, results)
+                if _add(inner):
+                    done = True
+                    break
+            if done:
+                break
         else:
-            _maybe_add_yt_entry(e, include_shorts, results)
+            if _add(e):
+                break
 
     return results
 

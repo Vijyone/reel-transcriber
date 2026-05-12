@@ -26,7 +26,6 @@ from reel_agent import (
     VideoListing,
     create_notion_row,
     detect_creator_source,
-    enumerate_instagram,
     enumerate_youtube,
     fetch_pending_rows,
     get_available_notion_columns,
@@ -728,7 +727,7 @@ with tab_creator:
         with url_col:
             creator_url = st.text_input(
                 "Creator URL",
-                placeholder="https://www.youtube.com/@channel   or   https://www.instagram.com/username",
+                placeholder="https://www.youtube.com/@channel  or  https://www.youtube.com/playlist?list=…",
                 label_visibility="collapsed",
                 key="creator_url",
             )
@@ -753,7 +752,7 @@ with tab_creator:
             include_shorts = st.checkbox(
                 "Include YouTube Shorts",
                 value=False, key="creator_shorts",
-                help="When enumerating a YouTube channel.",
+                help="Pull Shorts in addition to long-form videos.",
             )
         with c4:
             enum_limit = st.number_input(
@@ -765,11 +764,18 @@ with tab_creator:
         if enumerate_clicked:
             url = creator_url.strip()
             if not url:
-                st.warning("Paste a channel or profile URL first.")
+                st.warning("Paste a YouTube channel or playlist URL first.")
             else:
                 source = detect_creator_source(url)
-                if source == "unknown":
-                    st.error("Unrecognized URL. Use a YouTube or Instagram link.")
+                if source == "instagram":
+                    st.error(
+                        "Instagram profile enumeration isn't supported here — IG actively blocks "
+                        "third-party profile scraping and the workarounds aren't worth the hassle. "
+                        "Paste individual reel URLs in the **Try a few links** tab instead — that "
+                        "works without any auth."
+                    )
+                elif source != "youtube":
+                    st.error("Use a YouTube channel or playlist URL.")
                 else:
                     matched = next(
                         (it for it in integrations
@@ -781,30 +787,21 @@ with tab_creator:
                     else:
                         try:
                             has_date_filter = bool(from_date or to_date)
-                            if source == "youtube" and has_date_filter:
+                            if has_date_filter:
                                 spinner_msg = (
                                     f"Fetching dates for up to {enum_limit or '∞'} videos — "
-                                    f"~1.5 sec each, so this can take a few minutes for big channels."
+                                    "~1.5 sec each, so this can take a few minutes for big channels."
                                 )
-                            elif source == "instagram":
-                                spinner_msg = "Enumerating Instagram profile (can take a minute on big accounts)…"
                             else:
                                 spinner_msg = "Enumerating channel…"
                             with st.spinner(spinner_msg):
-                                if source == "youtube":
-                                    listings = enumerate_youtube(
-                                        url,
-                                        limit=(enum_limit or None),
-                                        include_shorts=include_shorts,
-                                        cookies_from_browser=cookies_from_browser,
-                                        need_dates=has_date_filter,
-                                    )
-                                else:
-                                    listings = enumerate_instagram(
-                                        url,
-                                        limit=(enum_limit or None),
-                                        cookies_from_browser=cookies_from_browser,
-                                    )
+                                listings = enumerate_youtube(
+                                    url,
+                                    limit=(enum_limit or None),
+                                    include_shorts=include_shorts,
+                                    cookies_from_browser=cookies_from_browser,
+                                    need_dates=has_date_filter,
+                                )
 
                             # Apply date filter (yt-dlp / instaloader both expose YYYY-MM-DD via VideoListing)
                             if from_date or to_date:

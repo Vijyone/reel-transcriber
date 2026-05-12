@@ -194,6 +194,47 @@ def get_available_notion_columns(notion: NotionClient, db_id: str) -> set:
     return set(ds.get("properties", {}).keys())
 
 
+def append_transcript_to_page(notion: NotionClient, page_id: str, transcript: str) -> None:
+    """Append the transcript as paragraph block(s) inside the page body.
+
+    Notion's rich_text *property* values are tight (2000 UTF-16 units per block,
+    capped array length), which becomes a problem for long-form videos. The
+    page body has no practical length cap. This keeps the row clean and the
+    full transcript readable when you open the page."""
+    if not transcript:
+        return
+
+    # Heading so the section is clearly demarcated in the page body
+    heading = {
+        "object": "block",
+        "type": "heading_3",
+        "heading_3": {
+            "rich_text": [{"type": "text", "text": {"content": "🎙️ Transcript"}}],
+        },
+    }
+
+    # Paragraph blocks — one per ≤ 2000-UTF-16-unit chunk
+    chunks = chunk_rich_text(transcript)
+    paragraphs = [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [chunk]},
+        }
+        for chunk in chunks
+    ]
+
+    blocks = [heading] + paragraphs
+
+    # Notion limits each blocks.children.append call to 100 children.
+    BATCH = 100
+    for i in range(0, len(blocks), BATCH):
+        notion.blocks.children.append(
+            block_id=page_id,
+            children=blocks[i : i + BATCH],
+        )
+
+
 def update_notion_row(
     notion: NotionClient,
     page_id: str,
@@ -203,16 +244,18 @@ def update_notion_row(
 ):
     """Write the scraped/transcribed data back to a Notion row.
 
+    Properties (likes, views, comments, caption…) go into row columns.
+    The transcript goes into the page body instead of a property — see
+    append_transcript_to_page for why.
+
     If `available_props` is provided, only writes to columns that actually
-    exist in the database — silently skipping the rest. This lets the app
-    work against Notion DBs with different schemas (some users have a
-    Comments column, others don't, etc.)."""
+    exist in the database — silently skipping the rest."""
 
     def _ok(name: Optional[str]) -> bool:
         if not name:
             return False
         if available_props is None:
-            return True  # caller didn't filter — trust their config
+            return True
         return name in available_props
 
     props = {}
@@ -224,8 +267,6 @@ def update_notion_row(
         props[PROP_COMMENTS] = {"number": data.comments}
     if _ok(PROP_CAPTION) and data.caption is not None:
         props[PROP_CAPTION] = {"rich_text": chunk_rich_text(data.caption)}
-    if _ok(PROP_TRANSCRIPT) and data.transcript is not None:
-        props[PROP_TRANSCRIPT] = {"rich_text": chunk_rich_text(data.transcript)}
     if _ok(PROP_USERNAME) and data.username:
         props[PROP_USERNAME] = {"rich_text": [{"text": {"content": data.username}}]}
     if _ok(PROP_STATUS):
@@ -233,7 +274,11 @@ def update_notion_row(
     if _ok(PROP_LAST_RUN):
         props[PROP_LAST_RUN] = {"date": {"start": time.strftime("%Y-%m-%dT%H:%M:%S")}}
 
-    notion.pages.update(page_id=page_id, properties=props)
+    if props:
+        notion.pages.update(page_id=page_id, properties=props)
+
+    if data.transcript:
+        append_transcript_to_page(notion, page_id, data.transcript)
 
 
 def get_notion_title_column(notion: NotionClient, db_id: str) -> str:
@@ -306,8 +351,6 @@ def create_notion_row(
         properties[PROP_COMMENTS] = {"number": data.comments}
     if _ok(PROP_CAPTION) and data.caption is not None:
         properties[PROP_CAPTION] = {"rich_text": chunk_rich_text(data.caption)}
-    if _ok(PROP_TRANSCRIPT) and data.transcript is not None:
-        properties[PROP_TRANSCRIPT] = {"rich_text": chunk_rich_text(data.transcript)}
     if _ok(PROP_USERNAME) and data.username:
         properties[PROP_USERNAME] = {"rich_text": [{"text": {"content": data.username}}]}
     if _ok(PROP_STATUS):
@@ -319,6 +362,11 @@ def create_notion_row(
         parent={"data_source_id": ds_id},
         properties=properties,
     )
+
+    # Transcript lives in the page body, not as a property — no length cap.
+    if data.transcript:
+        append_transcript_to_page(notion, page["id"], data.transcript)
+
     return page["id"]
 
 

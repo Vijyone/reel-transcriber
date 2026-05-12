@@ -459,40 +459,75 @@ def _maybe_add_yt_entry(e: dict, include_shorts: bool, out: List[VideoListing]) 
 def enumerate_instagram(
     profile_url: str,
     limit: Optional[int] = None,
-    cookies_from_browser: Optional[str] = None,  # accepted for symmetry; instaloader uses its own session
+    cookies_from_browser: Optional[str] = None,  # kept for signature symmetry
 ) -> List[VideoListing]:
-    """Enumerate video/reel posts from an Instagram profile URL via instaloader.
+    """Enumerate video posts from an Instagram profile URL via instaloader.
 
-    Only includes video posts (skips image posts and carousels-without-video).
-    Note: IG rate-limits hard on big accounts; anonymous enumeration may stop
-    after ~50–100 posts. For large accounts the user should authenticate
-    instaloader separately (see instaloader docs)."""
+    Skips image posts and carousels-without-video. Auto-loads any saved
+    instaloader session from ~/.config/instaloader/ — without that, IG
+    typically blocks anonymous profile lookups and returns 'profile does
+    not exist' even for real profiles."""
     try:
         import instaloader
+        from instaloader.exceptions import (
+            ProfileNotExistsException, ConnectionException, QueryReturnedNotFoundException,
+        )
     except ImportError:
         sys.exit("instaloader is not installed.  pip install instaloader")
 
-    # Extract username from URL.
+    # Extract username from URL
     m = re.search(r"instagram\.com/(?:@?)([^/?#]+)", profile_url)
     if not m:
         raise ValueError(f"Couldn't extract an Instagram username from {profile_url!r}")
     username = m.group(1)
     if username.lower() in {"reel", "reels", "p", "tv", "stories"}:
         raise ValueError(
-            f"That looks like a post URL, not a profile. Paste the creator's profile page instead "
-            f"(e.g. https://www.instagram.com/their_username)."
+            "That looks like a post URL, not a profile. Paste the creator's profile "
+            "page instead (e.g. https://www.instagram.com/their_username)."
         )
 
     L = instaloader.Instaloader(
         quiet=True,
-        download_pictures=False,
-        download_videos=False,
-        download_video_thumbnails=False,
-        download_geotags=False,
-        download_comments=False,
-        save_metadata=False,
+        download_pictures=False, download_videos=False,
+        download_video_thumbnails=False, download_geotags=False,
+        download_comments=False, save_metadata=False,
     )
-    profile = instaloader.Profile.from_username(L.context, username)
+
+    # Auto-load any saved login session so anonymous rate limits don't bite.
+    # Created by running `instaloader -l YOUR_USERNAME` once in a terminal.
+    import os as _os
+    from pathlib import Path as _Path
+    session_dir = _Path.home() / ".config" / "instaloader"
+    loaded_session_for = None
+    if session_dir.exists():
+        for f in session_dir.iterdir():
+            if f.name.startswith("session-"):
+                session_user = f.name[len("session-"):]
+                try:
+                    L.load_session_from_file(session_user, str(f))
+                    loaded_session_for = session_user
+                    break
+                except Exception:
+                    continue
+
+    try:
+        profile = instaloader.Profile.from_username(L.context, username)
+    except (ProfileNotExistsException, QueryReturnedNotFoundException, ConnectionException) as e:
+        if loaded_session_for:
+            raise RuntimeError(
+                f"Instagram returned a 'profile not found' / rate-limit error for "
+                f"@{username}, even though we're authenticated as @{loaded_session_for}. "
+                "Wait a few minutes and try again, or check the URL."
+            )
+        raise RuntimeError(
+            f"Instagram blocked the request for @{username}. This is almost always "
+            "anonymous rate-limiting, NOT a real missing profile.\n\n"
+            "Fix: authenticate instaloader once on this Mac. In a Terminal, run:\n"
+            "  instaloader -l YOUR_IG_USERNAME\n"
+            "Enter your IG password when prompted. It saves a session file the "
+            "app will pick up automatically next time.\n\n"
+            "Use a burner account — scraping from your main IG can get it banned."
+        )
 
     results: List[VideoListing] = []
     for post in profile.get_posts():

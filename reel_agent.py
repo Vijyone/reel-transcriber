@@ -236,6 +236,241 @@ def update_notion_row(
     notion.pages.update(page_id=page_id, properties=props)
 
 
+def get_notion_title_column(notion: NotionClient, db_id: str) -> str:
+    """Return the name of the title-type column (every Notion DB has exactly one)."""
+    ds_id = resolve_data_source_id(notion, db_id)
+    ds = notion.data_sources.retrieve(data_source_id=ds_id)
+    for name, prop in ds.get("properties", {}).items():
+        if prop.get("type") == "title":
+            return name
+    return "Name"  # sensible fallback
+
+
+def list_existing_urls(notion: NotionClient, db_id: str, url_column: str = "Reference") -> set:
+    """Return the set of URLs already present in the given DB's URL column.
+    Used for dedup when bulk-adding videos from a channel/profile."""
+    ds_id = resolve_data_source_id(notion, db_id)
+    urls: set = set()
+    cursor = None
+    while True:
+        kwargs = {"data_source_id": ds_id, "page_size": 100}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        resp = notion.data_sources.query(**kwargs)
+        for page in resp["results"]:
+            prop = page["properties"].get(url_column, {})
+            if prop.get("type") == "url" and prop.get("url"):
+                urls.add(prop["url"])
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    return urls
+
+
+def create_notion_row(
+    notion: NotionClient,
+    db_id: str,
+    url: str,
+    data: ReelData,
+    available_props: Optional[set] = None,
+    title_column: str = "Name",
+) -> str:
+    """Create a new row in the Notion database for `url`, populating whatever
+    metric/transcript columns exist in the data source. Returns the new page id."""
+    ds_id = resolve_data_source_id(notion, db_id)
+
+    # Build a reasonable title from caption / username / URL.
+    title_text = (data.caption or data.username or url)
+    title_text = title_text.strip().splitlines()[0] if title_text else url
+    if len(title_text) > 200:
+        title_text = title_text[:200] + "…"
+
+    properties = {
+        title_column: {"title": [{"text": {"content": title_text}}]},
+    }
+
+    def _ok(name: Optional[str]) -> bool:
+        if not name:
+            return False
+        if available_props is None:
+            return True
+        return name in available_props
+
+    if _ok(PROP_URL):
+        properties[PROP_URL] = {"url": url}
+    if _ok(PROP_LIKES) and data.likes is not None:
+        properties[PROP_LIKES] = {"number": data.likes}
+    if _ok(PROP_VIEWS) and data.views is not None:
+        properties[PROP_VIEWS] = {"number": data.views}
+    if _ok(PROP_COMMENTS) and data.comments is not None:
+        properties[PROP_COMMENTS] = {"number": data.comments}
+    if _ok(PROP_CAPTION) and data.caption is not None:
+        properties[PROP_CAPTION] = {"rich_text": chunk_rich_text(data.caption)}
+    if _ok(PROP_TRANSCRIPT) and data.transcript is not None:
+        properties[PROP_TRANSCRIPT] = {"rich_text": chunk_rich_text(data.transcript)}
+    if _ok(PROP_USERNAME) and data.username:
+        properties[PROP_USERNAME] = {"rich_text": [{"text": {"content": data.username}}]}
+    if _ok(PROP_STATUS):
+        properties[PROP_STATUS] = {"select": {"name": "Done"}}
+    if _ok(PROP_LAST_RUN):
+        properties[PROP_LAST_RUN] = {"date": {"start": time.strftime("%Y-%m-%dT%H:%M:%S")}}
+
+    page = notion.pages.create(
+        parent={"data_source_id": ds_id},
+        properties=properties,
+    )
+    return page["id"]
+
+
+# --------------------------------------------------------------------------- #
+# Channel / profile enumeration                                                #
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class VideoListing:
+    """Lightweight metadata for a video found via channel/profile enumeration.
+    Use the URL to feed into scrape_and_download for the full pipeline."""
+    url: str
+    title: str
+    upload_date: Optional[str]  # YYYY-MM-DD
+    duration: Optional[float]   # seconds
+    id: str = ""
+
+
+def _ydmd_to_iso(s: Optional[str]) -> Optional[str]:
+    """yt-dlp returns dates as 'YYYYMMDD'. Convert to 'YYYY-MM-DD'."""
+    if not s or len(s) != 8 or not s.isdigit():
+        return None
+    return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+
+def enumerate_youtube(
+    url: str,
+    limit: Optional[int] = None,
+    include_shorts: bool = False,
+    cookies_from_browser: Optional[str] = None,
+) -> List[VideoListing]:
+    """Enumerate videos from a YouTube channel or playlist URL.
+
+    Uses yt-dlp's flat extraction — no audio downloads. Each entry returns
+    enough metadata to filter by date before the heavy lifting starts."""
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "skip_download": True,
+    }
+    if limit:
+        opts["playlistend"] = limit
+    if cookies_from_browser:
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
+
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    entries = info.get("entries") or []
+    results: List[VideoListing] = []
+    for e in entries:
+        if not e:
+            continue
+        # Sometimes "entries" are nested (channel → tabs → videos). Flatten one level.
+        nested = e.get("entries")
+        if nested:
+            for inner in nested:
+                if not inner:
+                    continue
+                _maybe_add_yt_entry(inner, include_shorts, results)
+        else:
+            _maybe_add_yt_entry(e, include_shorts, results)
+
+    return results
+
+
+def _maybe_add_yt_entry(e: dict, include_shorts: bool, out: List[VideoListing]) -> None:
+    entry_url = e.get("url") or e.get("webpage_url") or ""
+    if not entry_url:
+        vid = e.get("id")
+        if vid:
+            entry_url = f"https://www.youtube.com/watch?v={vid}"
+        else:
+            return
+    is_short = "/shorts/" in entry_url
+    if is_short and not include_shorts:
+        return
+    out.append(VideoListing(
+        url=entry_url,
+        title=e.get("title", "") or "",
+        upload_date=_ydmd_to_iso(e.get("upload_date")),
+        duration=e.get("duration"),
+        id=e.get("id", "") or "",
+    ))
+
+
+def enumerate_instagram(
+    profile_url: str,
+    limit: Optional[int] = None,
+    cookies_from_browser: Optional[str] = None,  # accepted for symmetry; instaloader uses its own session
+) -> List[VideoListing]:
+    """Enumerate video/reel posts from an Instagram profile URL via instaloader.
+
+    Only includes video posts (skips image posts and carousels-without-video).
+    Note: IG rate-limits hard on big accounts; anonymous enumeration may stop
+    after ~50–100 posts. For large accounts the user should authenticate
+    instaloader separately (see instaloader docs)."""
+    try:
+        import instaloader
+    except ImportError:
+        sys.exit("instaloader is not installed.  pip install instaloader")
+
+    # Extract username from URL.
+    m = re.search(r"instagram\.com/(?:@?)([^/?#]+)", profile_url)
+    if not m:
+        raise ValueError(f"Couldn't extract an Instagram username from {profile_url!r}")
+    username = m.group(1)
+    if username.lower() in {"reel", "reels", "p", "tv", "stories"}:
+        raise ValueError(
+            f"That looks like a post URL, not a profile. Paste the creator's profile page instead "
+            f"(e.g. https://www.instagram.com/their_username)."
+        )
+
+    L = instaloader.Instaloader(
+        quiet=True,
+        download_pictures=False,
+        download_videos=False,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False,
+    )
+    profile = instaloader.Profile.from_username(L.context, username)
+
+    results: List[VideoListing] = []
+    for post in profile.get_posts():
+        if not post.is_video:
+            continue
+        shortcode = post.shortcode
+        results.append(VideoListing(
+            url=f"https://www.instagram.com/p/{shortcode}/",
+            title=(post.caption or "").strip().splitlines()[0][:200] if post.caption else "",
+            upload_date=post.date_local.strftime("%Y-%m-%d") if post.date_local else None,
+            duration=getattr(post, "video_duration", None),
+            id=shortcode,
+        ))
+        if limit and len(results) >= limit:
+            break
+    return results
+
+
+def detect_creator_source(url: str) -> str:
+    """Return 'youtube', 'instagram', or 'unknown' based on the URL."""
+    u = url.lower()
+    if "youtube.com" in u or "youtu.be" in u:
+        return "youtube"
+    if "instagram.com" in u:
+        return "instagram"
+    return "unknown"
+
+
 # --------------------------------------------------------------------------- #
 # yt-dlp scrape + download                                                     #
 # --------------------------------------------------------------------------- #

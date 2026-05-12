@@ -23,9 +23,16 @@ from dotenv import load_dotenv
 from reel_agent import (
     MLX_MODEL_REPOS,
     ReelData,
+    VideoListing,
+    create_notion_row,
+    detect_creator_source,
+    enumerate_instagram,
+    enumerate_youtube,
     fetch_pending_rows,
     get_available_notion_columns,
+    get_notion_title_column,
     get_url_from_page,
+    list_existing_urls,
     parse_notion_db_id,
     resolve_data_source_id,
     scrape_and_download,
@@ -424,7 +431,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_paste, tab_notion = st.tabs(["  Try a few links  ", "  Sync with Notion  "])
+tab_paste, tab_notion, tab_creator = st.tabs([
+    "  Try a few links  ",
+    "  Sync with Notion  ",
+    "  Pull from a creator  ",
+])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -693,3 +704,253 @@ with tab_notion:
                             else:
                                 final = f"{ok} saved, {failed} hit a snag."
                             status.update(label=final, state="complete" if failed == 0 else "error")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tab 3: Pull from a creator
+# ──────────────────────────────────────────────────────────────────────────────
+
+with tab_creator:
+    if "notion_db_id" not in st.session_state:
+        st.info(
+            "Connect a Notion database in the **Sync with Notion** tab first — "
+            "that's where new rows will be created."
+        )
+    else:
+        via = st.session_state.get("notion_db_integration", "")
+        st.caption(
+            f"New rows will be created in **{st.session_state['notion_db_name']}** "
+            f"(via _{via}_)."
+        )
+
+        # URL input + Enumerate
+        url_col, btn_col = st.columns([5, 1])
+        with url_col:
+            creator_url = st.text_input(
+                "Creator URL",
+                placeholder="https://www.youtube.com/@channel   or   https://www.instagram.com/username",
+                label_visibility="collapsed",
+                key="creator_url",
+            )
+        with btn_col:
+            enumerate_clicked = st.button(
+                "Find videos", type="primary", use_container_width=True, key="creator_enum"
+            )
+
+        # Filter row — date range, shorts toggle, limit
+        c1, c2, c3, c4 = st.columns([1.4, 1.4, 1.5, 1])
+        with c1:
+            from_date = st.date_input(
+                "From date", value=None, key="creator_from",
+                help="Leave blank for no lower bound.",
+            )
+        with c2:
+            to_date = st.date_input(
+                "To date", value=None, key="creator_to",
+                help="Leave blank for no upper bound.",
+            )
+        with c3:
+            include_shorts = st.checkbox(
+                "Include YouTube Shorts",
+                value=False, key="creator_shorts",
+                help="When enumerating a YouTube channel.",
+            )
+        with c4:
+            enum_limit = st.number_input(
+                "Max", min_value=0, value=200, key="creator_max",
+                help="Hard cap on enumeration. 0 = no cap. Keep low for big channels.",
+            )
+
+        # Enumerate handler
+        if enumerate_clicked:
+            url = creator_url.strip()
+            if not url:
+                st.warning("Paste a channel or profile URL first.")
+            else:
+                source = detect_creator_source(url)
+                if source == "unknown":
+                    st.error("Unrecognized URL. Use a YouTube or Instagram link.")
+                else:
+                    matched = next(
+                        (it for it in integrations
+                         if it.get("name") == st.session_state.get("notion_db_integration")),
+                        None,
+                    )
+                    if not matched:
+                        st.error("Reconnect — the Notion integration that opened this DB was removed.")
+                    else:
+                        try:
+                            with st.spinner(
+                                f"Enumerating from {source.capitalize()}… "
+                                f"({'this can take a minute on big accounts' if source == 'instagram' else 'usually quick'})"
+                            ):
+                                if source == "youtube":
+                                    listings = enumerate_youtube(
+                                        url,
+                                        limit=(enum_limit or None),
+                                        include_shorts=include_shorts,
+                                        cookies_from_browser=cookies_from_browser,
+                                    )
+                                else:
+                                    listings = enumerate_instagram(
+                                        url,
+                                        limit=(enum_limit or None),
+                                        cookies_from_browser=cookies_from_browser,
+                                    )
+
+                            # Apply date filter (yt-dlp / instaloader both expose YYYY-MM-DD via VideoListing)
+                            if from_date or to_date:
+                                from_str = from_date.strftime("%Y-%m-%d") if from_date else None
+                                to_str = to_date.strftime("%Y-%m-%d") if to_date else None
+                                listings = [
+                                    v for v in listings
+                                    if (not from_str or (v.upload_date and v.upload_date >= from_str))
+                                       and (not to_str or (v.upload_date and v.upload_date <= to_str))
+                                ]
+
+                            # Dedup against the target DB
+                            notion_client = get_notion_client(matched["token"])
+                            existing = list_existing_urls(notion_client, st.session_state["notion_db_id"])
+
+                            st.session_state["creator_listings"] = listings
+                            st.session_state["creator_existing_urls"] = existing
+                            st.session_state["creator_source"] = source
+                            st.session_state.pop("creator_run_done", None)
+                        except Exception as e:
+                            st.error(f"Enumeration failed — {e}")
+
+        # Show preview if we have a result
+        if "creator_listings" in st.session_state:
+            listings = st.session_state["creator_listings"]
+            existing = st.session_state["creator_existing_urls"]
+
+            new_count = sum(1 for v in listings if v.url not in existing)
+            already_count = len(listings) - new_count
+
+            st.write("")
+            st.caption(
+                f"Found **{len(listings)}** video{'' if len(listings) == 1 else 's'}  ·  "
+                f"**{new_count}** new  ·  **{already_count}** already in this DB"
+            )
+
+            if not listings:
+                st.info("No videos match the filter. Try widening the date range, raising the cap, or check the URL.")
+            else:
+                # Build a DataFrame for the editable preview
+                import pandas as pd
+
+                def _fmt_dur(secs):
+                    if not secs:
+                        return "—"
+                    m, s = divmod(int(secs), 60)
+                    return f"{m}:{s:02d}"
+
+                rows = []
+                for v in listings:
+                    is_new = v.url not in existing
+                    rows.append({
+                        "Run": is_new,  # pre-check new, leave existing unchecked
+                        "Date": v.upload_date or "?",
+                        "Title": (v.title or "")[:120] or "(no title)",
+                        "Length": _fmt_dur(v.duration),
+                        "In DB": "—" if is_new else "yes",
+                        "_url": v.url,
+                    })
+                df = pd.DataFrame(rows)
+
+                edited = st.data_editor(
+                    df,
+                    column_config={
+                        "Run":    st.column_config.CheckboxColumn("Run", width="small", default=True),
+                        "Date":   st.column_config.TextColumn("Date", width="small"),
+                        "Title":  st.column_config.TextColumn("Title", width="large"),
+                        "Length": st.column_config.TextColumn("Length", width="small"),
+                        "In DB":  st.column_config.TextColumn("In DB", width="small"),
+                        "_url":   None,  # hidden
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(35 * (len(rows) + 1) + 3, 420),
+                    key="creator_table",
+                )
+
+                selected = edited[edited["Run"] == True]  # noqa: E712
+                count = len(selected)
+
+                # Process button on the right, with count label
+                _, run_col = st.columns([4, 1])
+                with run_col:
+                    process_clicked = st.button(
+                        f"Run on {count} video{'' if count == 1 else 's'}",
+                        type="primary",
+                        disabled=(count == 0),
+                        use_container_width=True,
+                        key="creator_run",
+                    )
+
+                if count > already_count and already_count > 0:
+                    # User checked some 'In DB' rows → will create duplicates.
+                    st.caption("⚠️ Some checked rows are already in your DB; processing them will create duplicate rows.")
+
+                if process_clicked:
+                    matched = next(
+                        (it for it in integrations
+                         if it.get("name") == st.session_state.get("notion_db_integration")),
+                        None,
+                    )
+                    if not matched:
+                        st.error("Reconnect — Notion integration is missing.")
+                    else:
+                        notion = get_notion_client(matched["token"])
+                        available_cols = st.session_state.get("notion_available_cols")
+                        try:
+                            title_col = get_notion_title_column(notion, st.session_state["notion_db_id"])
+                        except Exception:
+                            title_col = "Name"
+
+                        urls_to_process = list(selected["_url"])
+                        ok = failed = 0
+                        status_label = (
+                            "Working on 1 video…" if count == 1
+                            else f"Working through {count} videos…"
+                        )
+                        with st.status(status_label, expanded=True) as status:
+                            log = lambda msg: st.write(msg)
+                            for i, vid_url in enumerate(urls_to_process, 1):
+                                st.write(f"---\n**Video {i} of {count}** · `{vid_url}`")
+                                try:
+                                    data = process_url(vid_url, log)
+                                except Exception as e:
+                                    failed += 1
+                                    st.write(f"   ⚠️ scrape/transcribe failed: {e}")
+                                    continue
+                                try:
+                                    create_notion_row(
+                                        notion, st.session_state["notion_db_id"], vid_url, data,
+                                        available_props=available_cols,
+                                        title_column=title_col,
+                                    )
+                                    ok += 1
+                                    st.write("   Created in Notion ✓")
+                                except Exception as e:
+                                    failed += 1
+                                    st.write(f"   ⚠️ Notion create failed: {e}")
+                                    with st.expander("📝 Transcript (Notion create failed — copy from here)", expanded=False):
+                                        st.markdown(
+                                            f"**@{data.username or '?'}** · "
+                                            f"{_fmt(data.likes)} likes · "
+                                            f"{_fmt(data.views)} views · "
+                                            f"{_fmt(data.comments)} comments"
+                                        )
+                                        if data.caption:
+                                            st.markdown(f"_{data.caption}_")
+                                        st.markdown("**Transcript**")
+                                        st.write(data.transcript or "_(empty)_")
+
+                            final = (
+                                f"All {ok} created."
+                                if failed == 0
+                                else f"{ok} created, {failed} hit a snag."
+                            )
+                            status.update(label=final, state="complete" if failed == 0 else "error")
+                        st.session_state["creator_run_done"] = True
